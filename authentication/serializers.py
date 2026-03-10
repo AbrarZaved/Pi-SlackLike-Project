@@ -63,6 +63,21 @@ class LoginResponseSerializer(serializers.Serializer):
     refresh_token = serializers.CharField()
     user = serializers.DictField()
 
+class AdminLoginSerializer(serializers.Serializer):
+    """
+    Serializer for admin login using email and password.
+    """
+    email = serializers.EmailField(
+        required=True,
+        help_text="Admin's email address"
+    )
+    password = serializers.CharField(
+        required=True,
+        min_length=8,
+        write_only=True,
+        help_text="Admin's password"
+    )
+    
 
 # ====================
 # User Serializers

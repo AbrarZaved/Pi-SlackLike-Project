@@ -23,6 +23,7 @@ urlpatterns = [
     
     # API Routes
     path('api/v1/auth/', include('authentication.urls')),
+    path('api/v1/admin/', include('Admin.urls')),
     
     # DRF Browsable API Authentication
     path('api-auth/', include('rest_framework.urls')),

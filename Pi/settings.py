@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     'django_celery_beat',  # Celery periodic tasks
     'django_celery_results',  # Celery task results
     'authentication',
+    'Admin',
 ]
 
 MIDDLEWARE = [

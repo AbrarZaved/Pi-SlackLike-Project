@@ -7,9 +7,11 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
 from drf_spectacular.types import OpenApiTypes
-
+from firebase_admin import auth
+from .firebase import get_firebase_app
 from .models import User, Role, Permission
 from .serializers import (
+    AdminLoginSerializer,
     SendOTPSerializer,
     VerifyOTPSerializer,
     LoginResponseSerializer,
@@ -41,15 +43,36 @@ class UserViewSet(viewsets.ModelViewSet):
     
     @extend_schema(
         description="Get all users in the system",
+        parameters=[
+            OpenApiParameter(
+                name='search',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Search users by email, name, or phone number',
+                required=False
+            )
+        ],
         tags=['Users']
     )
     def list(self, request):
         """List all users."""
         users = self.get_queryset()
+        
+        # Search filter
+        search_query = request.query_params.get('search', None)
+        if search_query:
+            from django.db.models import Q
+            users = users.filter(
+                Q(email__icontains=search_query) |
+                Q(name__icontains=search_query) |
+                Q(phone_number__icontains=search_query)
+            )
+        
         data = [
             {
                 'id': user.id,
                 'email': user.email,
+                'name': user.name,
                 'role': user.role_name,
                 'status': user.status,
                 'phone_number': user.phone_number,
@@ -383,6 +406,163 @@ class VerifyOTPView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+# Social Auth
+
+class FirebaseAuthView(APIView):
+    """
+    Authenticate user using Firebase ID token.
+    """
+    permission_classes = [AllowAny]
+    
+    @extend_schema(
+        description="Authenticate user using Firebase ID token and send OTP",
+        request=OpenApiTypes.OBJECT,
+        tags=['Authentication']
+    )
+    def post(self, request):
+        """Authenticate user using Firebase ID token and send OTP."""
+        id_token = request.data.get('id_token')
+        
+        if not id_token:
+            return Response(
+                {'error': 'ID token is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            firebase_app = get_firebase_app()
+            decoded_token = auth.verify_id_token(id_token, app=firebase_app)
+            email = decoded_token.get('email')
+            
+            if not email:
+                return Response(
+                    {'error': 'Email not found in token'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get Customer role for new users
+            from django.db.models import Q
+            try:
+                customer_role = Role.objects.get(Q(slug='customer') | Q(name__iexact='customer'))
+            except Role.DoesNotExist:
+                customer_role = None
+            
+            # Get or create user
+            defaults = {
+                'is_active': True,
+                'role': customer_role
+            }
+            
+            user, created = User.objects.get_or_create(
+                email=email,
+                defaults=defaults
+            )
+            
+            # Generate OTP
+            otp = user.generate_otp()
+            
+            # Send OTP via email asynchronously
+            send_otp_email.delay(user.id, otp)
+            
+            return Response({
+                'success': True,
+                'message': 'OTP sent to your email',
+                'email': email,
+                'is_new_user': created,
+            }, status=status.HTTP_200_OK)
+            
+        except auth.InvalidIdTokenError:
+            return Response(
+                {'error': 'Invalid ID token'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to send OTP: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+# Admin Login
+
+class AdminLoginView(APIView):
+    """
+    Admin login using email and password.
+    """
+    permission_classes = [AllowAny]
+    serializer_class = AdminLoginSerializer
+    @extend_schema(
+        description="Admin login using email and password",
+        request=AdminLoginSerializer,
+        responses={200: LoginResponseSerializer},
+        tags=['Authentication']
+    )
+    def post(self, request):
+        """Admin login using email and password."""
+        serializer = self.serializer_class(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response(
+                {'error': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        email = serializer.validated_data['email']
+        password = serializer.validated_data['password']
+        
+        try:
+            # Get user by email
+            user = User.objects.select_related('role').get(email=email)
+            
+            # Check if user is active
+            if not user.is_active:
+                return Response(
+                    {'error': 'User account is disabled'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Check password
+            if not user.check_password(password):
+                return Response(
+                    {'error': 'Invalid email or password'},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+            
+            # Check if user has admin role
+            if not user.role or user.role.slug != 'admin':
+                return Response(
+                    {'error': 'Access denied. Admin privileges required.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Generate JWT tokens
+            refresh = RefreshToken.for_user(user)
+            access_token = str(refresh.access_token)
+            refresh_token = str(refresh)
+            
+            return Response({
+                'success': True,
+                'message': 'Login successful',
+                'access_token': access_token,
+                'refresh_token': refresh_token,
+                'user': {
+                    'id': user.id,
+                    'email': user.email,
+                    'role': user.role_name,
+                    'phone_number': user.phone_number,
+                    'status': user.status,
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Invalid email or password'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Login failed: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class HealthCheckView(APIView):
     """
