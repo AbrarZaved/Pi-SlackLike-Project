@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Your OTP Code</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+        background-color: #f4f4f4;
+      }
+      .email-container {
+        max-width: 600px;
+        margin: 40px auto;
+        background-color: #ffffff;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      }
+      .email-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 40px 20px;
+        text-align: center;
+      }
+      .email-header h1 {
+        color: #ffffff;
+        margin: 0;
+        font-size: 28px;
+        font-weight: 600;
+      }
+      .email-header p {
+        color: #e0e7ff;
+        margin: 10px 0 0 0;
+        font-size: 14px;
+      }
+      .email-body {
+        padding: 40px 30px;
+      }
+      .greeting {
+        font-size: 18px;
+        color: #333333;
+        margin-bottom: 20px;
+      }
+      .greeting strong {
+        color: #667eea;
+      }
+      .message {
+        font-size: 15px;
+        color: #666666;
+        line-height: 1.6;
+        margin-bottom: 30px;
+      }
+      .otp-container {
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        border-radius: 12px;
+        padding: 30px;
+        text-align: center;
+        margin: 30px 0;
+        border: 2px dashed #667eea;
+      }
+      .otp-label {
+        font-size: 14px;
+        color: #666666;
+        margin-bottom: 15px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        font-weight: 600;
+      }
+      .otp-code {
+        font-size: 42px;
+        font-weight: 700;
+        color: #667eea;
+        letter-spacing: 8px;
+        margin: 10px 0;
+        font-family: "Courier New", monospace;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+      }
+      .otp-validity {
+        font-size: 13px;
+        color: #999999;
+        margin-top: 15px;
+      }
+      .otp-validity strong {
+        color: #e53e3e;
+      }
+      .info-box {
+        background-color: #fffbeb;
+        border-left: 4px solid #f59e0b;
+        padding: 15px 20px;
+        margin: 20px 0;
+        border-radius: 4px;
+      }
+      .info-box p {
+        margin: 0;
+        font-size: 14px;
+        color: #92400e;
+      }
+      .info-icon {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        background-color: #f59e0b;
+        color: white;
+        border-radius: 50%;
+        text-align: center;
+        line-height: 20px;
+        margin-right: 8px;
+        font-weight: bold;
+      }
+      .footer {
+        background-color: #f9fafb;
+        padding: 30px;
+        text-align: center;
+        border-top: 1px solid #e5e7eb;
+      }
+      .footer p {
+        margin: 5px 0;
+        font-size: 13px;
+        color: #6b7280;
+      }
+      .footer .brand {
+        font-weight: 600;
+        color: #667eea;
+        font-size: 16px;
+        margin-bottom: 10px;
+      }
+      .social-links {
+        margin: 20px 0;
+      }
+      .social-links a {
+        display: inline-block;
+        margin: 0 8px;
+        color: #9ca3af;
+        text-decoration: none;
+        font-size: 12px;
+      }
+      .divider {
+        height: 1px;
+        background-color: #e5e7eb;
+        margin: 25px 0;
+      }
+      @media only screen and (max-width: 600px) {
+        .email-container {
+          margin: 0;
+          border-radius: 0;
+        }
+        .email-body {
+          padding: 30px 20px;
+        }
+        .otp-code {
+          font-size: 36px;
+          letter-spacing: 6px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="email-container">
+      <!-- Header -->
+      <div class="email-header">
+        <h1>🔐 One-Time Password</h1>
+        <p>Secure Login Verification</p>
+      </div>
+
+      <!-- Body -->
+      <div class="email-body">
+        <p class="greeting">Hello <strong>{{ user.email }}</strong>,</p>
+
+        <p class="message">
+          You've requested to login to your 1Source.Chat account. Use the
+          following One-Time Password (OTP) to complete your authentication:
+        </p>
+
+        <!-- OTP Box -->
+        <div class="otp-container">
+          <div class="otp-label">Your OTP Code</div>
+          <div class="otp-code">{{ otp }}</div>
+          <div class="otp-validity">
+            This code is valid for <strong>10 minutes</strong>
+          </div>
+        </div>
+
+        <!-- Warning Box -->
+        <div class="info-box">
+          <p>
+            <span class="info-icon">!</span>
+            <strong>Security Notice:</strong> If you didn't request this code,
+            please ignore this email and ensure your account is secure.
+          </p>
+        </div>
+
+        <div class="divider"></div>
+
+        <p class="message" style="margin-bottom: 0">
+          For security reasons, do not share this OTP with anyone. The Pi
+          Platform team will never ask you for this code.
+        </p>
+      </div>
+
+      <!-- Footer -->
+      <div class="footer">
+        <p class="brand">1Source.Chat</p>
+        <p>Empowering teams to communicate better</p>
+
+        <div class="social-links">
+          <a href="#">Privacy Policy</a> · <a href="#">Terms of Service</a> ·
+          <a href="#">Support</a>
+        </div>
+
+        <p style="color: #9ca3af; font-size: 11px; margin-top: 20px">
+          © {{ current_year }} 1Source.Chat. All rights reserved.<br />
+          This is an automated email. Please do not reply to this message.
+        </p>
+      </div>
+    </div>
+  </body>
+</html>
