@@ -21,7 +21,12 @@ urlpatterns = [
     path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
     path('token/verify/', TokenVerifyView.as_view(), name='token-verify'),
     
+    # Profile Management
+    path('profile/', views.UserProfileUpdateView.as_view(), name='user-profile'),  # User profile update
+    path('admin/profile/', views.AdminProfileUpdateView.as_view(), name='admin-profile'),  # Admin profile update
+    
     # API Views
     path('permissions/me/', views.MyPermissionsView.as_view(), name='my-permissions'),
     path('health/', views.HealthCheckView.as_view(), name='health-check'),
 ]
+

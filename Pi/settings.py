@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     'django_celery_results',  # Celery task results
     'authentication',
     'Admin',
+    'Communication',
 ]
 
 MIDDLEWARE = [

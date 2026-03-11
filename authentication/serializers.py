@@ -73,7 +73,6 @@ class AdminLoginSerializer(serializers.Serializer):
     )
     password = serializers.CharField(
         required=True,
-        min_length=8,
         write_only=True,
         help_text="Admin's password"
     )
@@ -215,4 +214,102 @@ class RoleCreateSerializer(serializers.ModelSerializer):
             permissions = Permission.objects.filter(id__in=permission_ids)
             instance.permissions.set(permissions)
         
+        return instance
+
+
+# ====================
+# Profile Update Serializers
+# ====================
+
+class UserProfileUpdateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for users to update their own profile.
+    Regular users can update: name, phone_number, title, profile_picture, status
+    """
+    class Meta:
+        model = User
+        fields = ['name', 'phone_number', 'title', 'profile_picture', 'status']
+        extra_kwargs = {
+            'name': {'required': False},
+            'phone_number': {'required': False},
+            'title': {'required': False},
+            'profile_picture': {'required': False},
+            'status': {'required': False},
+        }
+    
+    def validate_phone_number(self, value):
+        """
+        Validate that phone number is unique (if provided).
+        """
+        if value:
+            user = self.instance
+            if User.objects.filter(phone_number=value).exclude(id=user.id).exists():
+                raise serializers.ValidationError("This phone number is already in use.")
+        return value
+    
+    def validate_status(self, value):
+        """
+        Validate status field.
+        """
+        valid_statuses = ['active', 'inactive', 'away', 'busy']
+        if value and value not in valid_statuses:
+            raise serializers.ValidationError(
+                f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
+            )
+        return value
+    
+    def update(self, instance, validated_data):
+        """
+        Update user profile fields.
+        """
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        return instance
+
+
+class AdminProfileUpdateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for admins to update their own profile.
+    Admins can update same fields as regular users: name, phone_number, title, profile_picture
+    """
+    class Meta:
+        model = User
+        fields = ['name', 'phone_number', 'title', 'profile_picture', 'status']
+        extra_kwargs = {
+            'name': {'required': False},
+            'phone_number': {'required': False},
+            'title': {'required': False},
+            'profile_picture': {'required': False},
+            'status': {'required': False},
+        }
+    
+    def validate_phone_number(self, value):
+        """
+        Validate that phone number is unique (if provided).
+        """
+        if value:
+            user = self.instance
+            if User.objects.filter(phone_number=value).exclude(id=user.id).exists():
+                raise serializers.ValidationError("This phone number is already in use.")
+        return value
+    
+    def validate_status(self, value):
+        """
+        Validate status field.
+        """
+        valid_statuses = ['active', 'inactive', 'away', 'busy']
+        if value and value not in valid_statuses:
+            raise serializers.ValidationError(
+                f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
+            )
+        return value
+    
+    def update(self, instance, validated_data):
+        """
+        Update admin profile fields.
+        """
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
         return instance

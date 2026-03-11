@@ -16,7 +16,9 @@ from .serializers import (
     VerifyOTPSerializer,
     LoginResponseSerializer,
     UserSerializer,
-    RoleSerializer
+    RoleSerializer,
+    UserProfileUpdateSerializer,
+    AdminProfileUpdateSerializer
 )
 from .permissions import (
     HasPermission, 
@@ -581,3 +583,138 @@ class HealthCheckView(APIView):
             'version': '1.0.0',
             'timestamp': str(request.META.get('HTTP_DATE', '')),
         })
+
+
+# ====================
+# Profile Update Views
+# ====================
+
+class UserProfileUpdateView(APIView):
+    """
+    API endpoint for users to update their own profile.
+    Regular users can update: name, phone_number, title, profile_picture
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserProfileUpdateSerializer
+    
+    @extend_schema(
+        description="Update current user's profile",
+        request=UserProfileUpdateSerializer,
+        responses={200: UserSerializer},
+        tags=['Profile']
+    )
+    def patch(self, request):
+        """Update user's own profile."""
+        user = request.user
+        serializer = self.serializer_class(
+            user, 
+            data=request.data, 
+            partial=True
+        )
+        
+        if not serializer.is_valid():
+            return Response(
+                {'error': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            updated_user = serializer.save()
+            user_serializer = UserSerializer(updated_user)
+            
+            return Response({
+                'success': True,
+                'message': 'Profile updated successfully',
+                'user': user_serializer.data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to update profile: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        description="Get current user's profile",
+        responses={200: UserSerializer},
+        tags=['Profile']
+    )
+    def get(self, request):
+        """Get current user's profile."""
+        user = request.user
+        serializer = UserSerializer(user)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AdminProfileUpdateView(APIView):
+    """
+    API endpoint for admins to update their own profile.
+    Admins can update: name, phone_number, title, profile_picture, status
+    """
+    permission_classes = [IsAuthenticated, IsAdmin]
+    serializer_class = AdminProfileUpdateSerializer
+    
+    @extend_schema(
+        description="Update admin's own profile (admin only)",
+        request=AdminProfileUpdateSerializer,
+        responses={200: UserSerializer},
+        tags=['Profile']
+    )
+    def patch(self, request):
+        """Update admin's own profile."""
+        user = request.user
+        
+        # Verify user has admin role
+        if not user.role or user.role.slug != 'admin':
+            return Response(
+                {'error': 'Access denied. Admin privileges required.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = self.serializer_class(
+            user, 
+            data=request.data, 
+            partial=True
+        )
+        
+        if not serializer.is_valid():
+            return Response(
+                {'error': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            updated_user = serializer.save()
+            user_serializer = UserSerializer(updated_user)
+            
+            return Response({
+                'success': True,
+                'message': 'Admin profile updated successfully',
+                'user': user_serializer.data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to update admin profile: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        description="Get admin's own profile (admin only)",
+        responses={200: UserSerializer},
+        tags=['Profile']
+    )
+    def get(self, request):
+        """Get admin's own profile."""
+        user = request.user
+        
+        # Verify user has admin role
+        if not user.role or user.role.slug != 'admin':
+            return Response(
+                {'error': 'Access denied. Admin privileges required.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = UserSerializer(user)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
