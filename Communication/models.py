@@ -10,9 +10,10 @@ class Channel(models.Model):
         ('private', 'Private'),
         ('public', 'Public'),
     )
-
+    user=models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='created_channels', null=True, blank=True)
     name=models.CharField(max_length=255)
     type=models.CharField(max_length=20, choices=CHANNEL_TYPES)
+    slug=models.SlugField(max_length=300, unique=True, null=True, blank=True)
     users=models.ManyToManyField('authentication.User', related_name='channels')
     created_at=models.DateTimeField(auto_now_add=True)
     updated_at=models.DateTimeField(auto_now=True)
@@ -24,13 +25,31 @@ class Channel(models.Model):
     def __str__(self):
         return self.name
 
+    def generate_unique_slug(self):
+        """Generate a unique slug for the channel"""
+        base_slug = slugify(self.name)
+        unique_slug = base_slug
+        counter = 1
+        
+        while Channel.objects.filter(slug=unique_slug).exclude(pk=self.pk).exists():
+            unique_slug = f"{base_slug}-{counter}"
+            counter += 1
+        
+        return unique_slug
+    
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = self.generate_unique_slug()
+        super().save(*args, **kwargs)
+
 
 class Workspace(models.Model):
+    user=models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='created_workspaces', null=True, blank=True)
     name=models.CharField(max_length=255)
-    sharable_link=models.URLField(max_length=500, null=True, blank=True)
+    slug=models.SlugField(max_length=300, unique=True, null=True, blank=True)
     picture=models.ImageField(upload_to='workspace_pictures/', null=True, blank=True)
-    channels=models.ManyToManyField(Channel, related_name='workspaces', blank=True, null=True)
-    users=models.ManyToManyField('authentication.User', related_name='workspaces', blank=True, null=True)
+    channels=models.ManyToManyField(Channel, related_name='workspaces', blank=True)
+    users=models.ManyToManyField('authentication.User', related_name='workspaces', blank=True)
     created_at=models.DateTimeField(auto_now_add=True)
     updated_at=models.DateTimeField(auto_now=True)
 
@@ -41,24 +60,19 @@ class Workspace(models.Model):
     def __str__(self):
         return self.name
     
-    def save(self, *args, **kwargs):
-        # Save first to get the ID
-        is_new = self.pk is None
-        super().save(*args, **kwargs)
+    def generate_unique_slug(self):
+        """Generate a unique slug for the workspace"""
+        base_slug = slugify(self.name)
+        unique_slug = base_slug
+        counter = 1
         
-        # Generate shareable link after we have an ID
-        if is_new and not self.sharable_link:
-            # Get base URL from allowed hosts
-            allowed_hosts = getattr(settings, 'ALLOWED_HOSTS', [])
-            if allowed_hosts and allowed_hosts[0] not in ['*', 'localhost', '127.0.0.1']:
-                domain = allowed_hosts[0]
-                protocol = 'https' if not settings.DEBUG else 'http'
-                base_url = f"{protocol}://{domain}"
-            else:
-                # Fallback for development
-                base_url = 'http://localhost:8000'
-            
-            workspace_slug = slugify(self.name)
-            self.sharable_link = f"{base_url}/workspace/{workspace_slug}/{self.id}"
-            # Save again to update the sharable_link
-            super().save(update_fields=['sharable_link'])
+        while Workspace.objects.filter(slug=unique_slug).exclude(pk=self.pk).exists():
+            unique_slug = f"{base_slug}-{counter}"
+            counter += 1
+        
+        return unique_slug
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = self.generate_unique_slug()
+        super().save(*args, **kwargs)

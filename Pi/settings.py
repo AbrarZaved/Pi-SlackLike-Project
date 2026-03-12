@@ -37,6 +37,44 @@ DEBUG = env('DEBUG')
 
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS')
 
+# ====================
+# CORS Configuration
+# ====================
+
+CORS_ALLOW_ALL_ORIGINS = DEBUG  # Allow all origins in development
+CORS_ALLOW_CREDENTIALS = True
+
+if not DEBUG:
+    CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[])
+
+# CORS Headers
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+# CSRF Trusted Origins - expand this in production via .env
+if DEBUG:
+    # In development, allow common ports and localhost variants
+    CSRF_TRUSTED_ORIGINS = [
+        'http://localhost:8000',
+        'http://localhost:8080',
+        'http://127.0.0.1:8000',
+        'http://127.0.0.1:8080',
+        'https://localhost:8000',
+        'https://localhost:8080',
+    ]
+else:
+    # In production, load from environment
+    CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[])
+
 
 # Application definition
 
@@ -61,6 +99,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -236,7 +275,7 @@ Authentication:
     'COMPONENT_SPLIT_REQUEST': True,
     'SCHEMA_PATH_PREFIX': r'/api/',
     'SECURITY': [{'jwtAuth': []}],
-    'SERVERS': [{'url': 'http://10.10.13.73:8000', 'description': 'Development server'}],
+    # SERVERS auto-detected from request - works with any port automatically
     'APPEND_COMPONENTS': {
         'securitySchemes': {
             'jwtAuth': {
@@ -261,7 +300,7 @@ Authentication:
 # ====================
 
 # Celery Broker (Redis)
-CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://localhost:6379/0')
+CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://localhost:6379/1')
 CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='django-db')
 
 # Celery Configuration
