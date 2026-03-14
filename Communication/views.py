@@ -6,7 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
-from .models import Channel, Workspace, Group
+from .models import Channel, Workspace, Group, ChatMessage, DirectMessageThread
 from .serializers import (
     ChannelSerializer,
     ChannelListSerializer,
@@ -16,7 +16,8 @@ from .serializers import (
     AddRemoveChannelsSerializer,
     GroupSerializer,
     GroupListSerializer,
-    GroupUpdateSerializer
+    GroupUpdateSerializer,
+    ChatMessageHistorySerializer
 )
 from authentication.models import User
 
@@ -834,4 +835,112 @@ class GroupViewSet(viewsets.ModelViewSet):
         from .serializers import GroupUserSerializer
         serializer = GroupUserSerializer(users, many=True)
         return Response(serializer.data)
+
+
+# ====================
+# Chat REST helpers
+# ====================
+
+class ChatViewSet(viewsets.ViewSet):
+    """REST endpoints for chat history and websocket endpoint discovery."""
+
+    permission_classes = [IsAuthenticated]
+
+    def _parse_limit(self, request, default=50, max_limit=200):
+        try:
+            limit = int(request.query_params.get('limit', default))
+        except (TypeError, ValueError):
+            limit = default
+        return max(1, min(limit, max_limit))
+
+    def _parse_before_id(self, request):
+        before_id = request.query_params.get('before_id')
+        try:
+            return int(before_id) if before_id else None
+        except (TypeError, ValueError):
+            return None
+
+    @extend_schema(
+        description="Return websocket URL patterns for chat.",
+        tags=['Chat']
+    )
+    def ws_endpoints(self, request):
+        return Response({
+            'channels': '/ws/chat/channels/<channel_id>/?token=<JWT>',
+            'groups': '/ws/chat/groups/<group_id>/?token=<JWT>',
+            'dm': '/ws/chat/dm/<other_user_id>/?token=<JWT>',
+            'search': '/ws/chat/search/?token=<JWT>',
+        })
+
+    @extend_schema(
+        description="Get message history for a channel (requires membership).",
+        tags=['Chat']
+    )
+    def channel_messages(self, request, channel_id: int):
+        if not Channel.objects.filter(id=channel_id, users=request.user).exists():
+            return Response({'error': 'Not allowed'}, status=status.HTTP_403_FORBIDDEN)
+
+        limit = self._parse_limit(request)
+        before_id = self._parse_before_id(request)
+
+        qs = ChatMessage.objects.filter(channel_id=channel_id).select_related(
+            'sender', 'reply_to__sender', 'forwarded_from__sender'
+        )
+        if before_id:
+            qs = qs.filter(id__lt=before_id)
+
+        items = list(qs.order_by('-created_at')[:limit])
+        items.reverse()
+        serializer = ChatMessageHistorySerializer(items, many=True, context={'request': request})
+        return Response(serializer.data)
+
+    @extend_schema(
+        description="Get message history for a group (requires membership).",
+        tags=['Chat']
+    )
+    def group_messages(self, request, group_id: int):
+        if not Group.objects.filter(id=group_id, users=request.user).exists():
+            return Response({'error': 'Not allowed'}, status=status.HTTP_403_FORBIDDEN)
+
+        limit = self._parse_limit(request)
+        before_id = self._parse_before_id(request)
+
+        qs = ChatMessage.objects.filter(group_id=group_id).select_related(
+            'sender', 'reply_to__sender', 'forwarded_from__sender'
+        )
+        if before_id:
+            qs = qs.filter(id__lt=before_id)
+
+        items = list(qs.order_by('-created_at')[:limit])
+        items.reverse()
+        serializer = ChatMessageHistorySerializer(items, many=True, context={'request': request})
+        return Response(serializer.data)
+
+    @extend_schema(
+        description="Get message history for a 1:1 DM with another user (auto-creates thread).",
+        tags=['Chat']
+    )
+    def dm_messages(self, request, other_user_id: int):
+        if request.user.id == other_user_id:
+            return Response({'error': 'Invalid user'}, status=status.HTTP_400_BAD_REQUEST)
+
+        other = User.objects.filter(id=other_user_id, is_active=True).first()
+        if not other:
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        thread = DirectMessageThread.get_or_create_for_users(request.user, other)
+
+        limit = self._parse_limit(request)
+        before_id = self._parse_before_id(request)
+
+        qs = ChatMessage.objects.filter(dm_thread=thread).select_related(
+            'sender', 'reply_to__sender', 'forwarded_from__sender'
+        )
+        if before_id:
+            qs = qs.filter(id__lt=before_id)
+
+        items = list(qs.order_by('-created_at')[:limit])
+        items.reverse()
+        serializer = ChatMessageHistorySerializer(items, many=True, context={'request': request})
+        return Response({'thread_id': thread.id, 'messages': serializer.data})
 

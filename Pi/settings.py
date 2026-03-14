@@ -129,6 +129,18 @@ TEMPLATES = [
 WSGI_APPLICATION = 'Pi.wsgi.application'
 ASGI_APPLICATION = 'Pi.asgi.application'
 
+# ====================
+# Channels (WebSocket) Configuration
+# ====================
+
+# In-memory channel layer is simplest and works for single-process dev.
+# If you later want multi-process / multi-server, switch to Redis via channels_redis.
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+    }
+}
+
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 

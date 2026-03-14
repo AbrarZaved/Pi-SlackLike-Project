@@ -3,7 +3,7 @@ Serializers for Communication APIs
 """
 
 from rest_framework import serializers
-from .models import Channel, Workspace, Group
+from .models import Channel, Workspace, Group, ChatMessage, ChatReaction, DirectMessageThread
 from authentication.models import User
 
 
@@ -343,3 +343,66 @@ class GroupUpdateSerializer(serializers.ModelSerializer):
         if value and not isinstance(value, User):
             raise serializers.ValidationError("Invalid admin user")
         return value
+
+
+# ====================
+# Chat Serializers (REST history helpers)
+# ====================
+
+class ChatReactionSummarySerializer(serializers.Serializer):
+    emoji = serializers.CharField()
+    count = serializers.IntegerField()
+    me = serializers.BooleanField()
+
+
+class ChatMessageHistorySerializer(serializers.ModelSerializer):
+    sender = CreatorSerializer(read_only=True)
+    reply_to = serializers.SerializerMethodField()
+    forwarded_from = serializers.SerializerMethodField()
+    reactions = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ChatMessage
+        fields = ['id', 'content', 'created_at', 'updated_at', 'sender', 'reply_to', 'forwarded_from', 'reactions']
+
+    def _mini_ref(self, msg: ChatMessage):
+        return {
+            'id': msg.id,
+            'content': msg.content,
+            'sender': {
+                'id': msg.sender_id,
+                'name': getattr(msg.sender, 'name', None),
+                'email': getattr(msg.sender, 'email', None),
+            },
+            'created_at': msg.created_at,
+        }
+
+    def get_reply_to(self, obj: ChatMessage):
+        if not obj.reply_to_id or not obj.reply_to:
+            return None
+        return self._mini_ref(obj.reply_to)
+
+    def get_forwarded_from(self, obj: ChatMessage):
+        if not obj.forwarded_from_id or not obj.forwarded_from:
+            return None
+        return self._mini_ref(obj.forwarded_from)
+
+    def get_reactions(self, obj: ChatMessage):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        user_id = getattr(user, 'id', None)
+        if not user_id:
+            return []
+
+        # Aggregate reactions by emoji.
+        from django.db.models import Count
+        qs = (
+            ChatReaction.objects.filter(message=obj)
+            .values('emoji')
+            .annotate(count=Count('id'))
+            .order_by('emoji')
+        )
+        mine = set(
+            ChatReaction.objects.filter(message=obj, user_id=user_id).values_list('emoji', flat=True)
+        )
+        return [{'emoji': r['emoji'], 'count': r['count'], 'me': r['emoji'] in mine} for r in qs]

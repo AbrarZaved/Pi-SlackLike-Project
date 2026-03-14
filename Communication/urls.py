@@ -52,6 +52,12 @@ group_add_users = views.GroupViewSet.as_view({'post': 'add_users'})
 group_remove_users = views.GroupViewSet.as_view({'post': 'remove_users'})
 group_users = views.GroupViewSet.as_view({'get': 'users'})
 
+# Chat (REST)
+chat_ws_endpoints = views.ChatViewSet.as_view({'get': 'ws_endpoints'})
+chat_channel_messages = views.ChatViewSet.as_view({'get': 'channel_messages'})
+chat_group_messages = views.ChatViewSet.as_view({'get': 'group_messages'})
+chat_dm_messages = views.ChatViewSet.as_view({'get': 'dm_messages'})
+
 urlpatterns = [
     # Channels
     path('channels/', channel_list, name='channel-list'),
@@ -81,4 +87,10 @@ urlpatterns = [
     path('groups/<int:pk>/add_users/', group_add_users, name='group-add-users'),
     path('groups/<int:pk>/remove_users/', group_remove_users, name='group-remove-users'),
     path('groups/<int:pk>/users/', group_users, name='group-users'),
+
+    # Chat (REST)
+    path('chat/ws-endpoints/', chat_ws_endpoints, name='chat-ws-endpoints'),
+    path('chat/channels/<int:channel_id>/messages/', chat_channel_messages, name='chat-channel-messages'),
+    path('chat/groups/<int:group_id>/messages/', chat_group_messages, name='chat-group-messages'),
+    path('chat/dm/<int:other_user_id>/messages/', chat_dm_messages, name='chat-dm-messages'),
 ]
