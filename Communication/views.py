@@ -6,14 +6,17 @@ from rest_framework.permissions import IsAuthenticated
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
-from .models import Channel, Workspace
+from .models import Channel, Workspace, Group
 from .serializers import (
     ChannelSerializer,
     ChannelListSerializer,
     WorkspaceSerializer,
     WorkspaceListSerializer,
     AddRemoveUsersSerializer,
-    AddRemoveChannelsSerializer
+    AddRemoveChannelsSerializer,
+    GroupSerializer,
+    GroupListSerializer,
+    GroupUpdateSerializer
 )
 from authentication.models import User
 
@@ -223,6 +226,27 @@ class ChannelViewSet(viewsets.ModelViewSet):
             'channel': response_serializer.data
         })
     
+    @extend_schema(
+        description="Leave the channel (remove yourself)",
+        responses={200: ChannelSerializer},
+        tags=['Channels']
+    )
+    @action(detail=True, methods=['post'])
+    def leave(self, request, pk=None):
+        """Remove the authenticated user from the channel"""
+        channel = self.get_object()
+        if request.user in channel.users.all():
+            channel.users.remove(request.user)
+            message = 'Successfully left the channel'
+        else:
+            message = 'You are not a member of this channel'
+
+        response_serializer = ChannelSerializer(channel)
+        return Response({
+            'message': message,
+            'channel': response_serializer.data
+        })
+
     @extend_schema(
         description="Get all users in a channel",
         responses={200: ChannelSerializer},
@@ -556,4 +580,258 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
             }
         })
 
+
+# ====================
+# Group ViewSet
+# ====================
+
+class GroupViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing groups.
+    
+    Provides CRUD operations for groups, user management, and admin utilities.
+    """
+    queryset = Group.objects.all().prefetch_related('users')
+    permission_classes = [IsAuthenticated]
+    
+    def get_serializer_class(self):
+        """Use appropriate serializer based on action"""
+        if self.action == 'list':
+            return GroupListSerializer
+        elif self.action == 'update' or self.action == 'partial_update':
+            return GroupUpdateSerializer
+        return GroupSerializer
+    
+    @extend_schema(
+        description="Get all groups",
+        parameters=[
+            OpenApiParameter(
+                name='search',
+                type=OpenApiTypes.STR,
+                description='Search groups by name',
+                required=False
+            )
+        ],
+        tags=['Groups']
+    )
+    def list(self, request):
+        """List all groups with optional filters"""
+        queryset = self.get_queryset()
+        
+        # Search by name
+        search = request.query_params.get('search', None)
+        if search:
+            queryset = queryset.filter(name__icontains=search)
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+    
+    @extend_schema(
+        description="Create a new group",
+        request=GroupSerializer,
+        responses={201: GroupSerializer},
+        tags=['Groups']
+    )
+    def create(self, request):
+        """Create a new group"""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=request.user, group_admin=request.user)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+    @extend_schema(
+        description="Get group details",
+        responses={200: GroupSerializer},
+        tags=['Groups']
+    )
+    def retrieve(self, request, pk=None):
+        """Get a specific group"""
+        group = self.get_object()
+        serializer = self.get_serializer(group)
+        return Response(serializer.data)
+    
+    @extend_schema(
+        description="Update group details (admin only)",
+        request=GroupUpdateSerializer,
+        responses={200: GroupUpdateSerializer},
+        tags=['Groups']
+    )
+    def update(self, request, pk=None):
+        """Update a group (admin/owner only)"""
+        group = self.get_object()
+        
+        # Check if user is admin or group owner
+        if request.user != group.group_admin and request.user != group.user:
+            return Response(
+                {'error': 'Only group admin or owner can update this group'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = self.get_serializer(group, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+    
+    @extend_schema(
+        description="Partially update group details (admin only)",
+        request=GroupUpdateSerializer,
+        responses={200: GroupUpdateSerializer},
+        tags=['Groups']
+    )
+    def partial_update(self, request, pk=None):
+        """Partially update a group (admin/owner only)"""
+        group = self.get_object()
+        
+        # Check if user is admin or group owner
+        if request.user != group.group_admin and request.user != group.user:
+            return Response(
+                {'error': 'Only group admin or owner can update this group'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = self.get_serializer(group, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+    
+    @extend_schema(
+        description="Delete a group (admin only)",
+        responses={204: None},
+        tags=['Groups']
+    )
+    def destroy(self, request, pk=None):
+        """Delete a group (admin/owner only)"""
+        group = self.get_object()
+        
+        # Check if user is admin or group owner
+        if request.user != group.group_admin and request.user != group.user:
+            return Response(
+                {'error': 'Only group admin or owner can delete this group'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        group.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    
+    @extend_schema(
+        description="Join a group",
+        responses={200: GroupSerializer},
+        tags=['Groups']
+    )
+    @action(detail=True, methods=['post'])
+    def join(self, request, pk=None):
+        """Join a group"""
+        group = self.get_object()
+        
+        if request.user in group.users.all():
+            return Response(
+                {'message': 'You are already a member of this group', 'group': GroupSerializer(group).data},
+                status=status.HTTP_200_OK
+            )
+        
+        group.users.add(request.user)
+        serializer = self.get_serializer(group)
+        return Response({
+            'message': f'Successfully joined group: {group.name}',
+            'group': serializer.data
+        })
+    
+    @extend_schema(
+        description="Leave a group",
+        responses={200: GroupSerializer},
+        tags=['Groups']
+    )
+    @action(detail=True, methods=['post'])
+    def leave(self, request, pk=None):
+        """Leave a group"""
+        group = self.get_object()
+        
+        if request.user not in group.users.all():
+            return Response(
+                {'message': 'You are not a member of this group', 'group': GroupSerializer(group).data},
+                status=status.HTTP_200_OK
+            )
+        
+        group.users.remove(request.user)
+        serializer = self.get_serializer(group)
+        return Response({
+            'message': f'Successfully left group: {group.name}',
+            'group': serializer.data
+        })
+    
+    @extend_schema(
+        description="Add users to a group (admin only)",
+        request=AddRemoveUsersSerializer,
+        responses={200: GroupSerializer},
+        tags=['Groups']
+    )
+    @action(detail=True, methods=['post'])
+    def add_users(self, request, pk=None):
+        """Add users to a group (admin/owner only)"""
+        group = self.get_object()
+        
+        # Check if user is admin or group owner
+        if request.user != group.group_admin and request.user != group.user:
+            return Response(
+                {'error': 'Only group admin or owner can add users'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = AddRemoveUsersSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        user_ids = serializer.validated_data['user_ids']
+        users = User.objects.filter(id__in=user_ids)
+        group.users.add(*users)
+        
+        response_serializer = self.get_serializer(group)
+        return Response({
+            'message': f'Successfully added {len(users)} user(s) to the group',
+            'group': response_serializer.data
+        })
+    
+    @extend_schema(
+        description="Remove users from a group (admin only)",
+        request=AddRemoveUsersSerializer,
+        responses={200: GroupSerializer},
+        tags=['Groups']
+    )
+    @action(detail=True, methods=['post'])
+    def remove_users(self, request, pk=None):
+        """Remove users from a group (admin/owner only)"""
+        group = self.get_object()
+        
+        # Check if user is admin or group owner
+        if request.user != group.group_admin and request.user != group.user:
+            return Response(
+                {'error': 'Only group admin or owner can remove users'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = AddRemoveUsersSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        user_ids = serializer.validated_data['user_ids']
+        users = User.objects.filter(id__in=user_ids)
+        group.users.remove(*users)
+        
+        response_serializer = self.get_serializer(group)
+        return Response({
+            'message': f'Successfully removed {len(users)} user(s) from the group',
+            'group': response_serializer.data
+        })
+    
+    @extend_schema(
+        description="Get all users in a group",
+        responses={200: GroupSerializer},
+        tags=['Groups']
+    )
+    @action(detail=True, methods=['get'])
+    def users(self, request, pk=None):
+        """Get all users in a group"""
+        group = self.get_object()
+        users = group.users.all()
+        from .serializers import GroupUserSerializer
+        serializer = GroupUserSerializer(users, many=True)
+        return Response(serializer.data)
 

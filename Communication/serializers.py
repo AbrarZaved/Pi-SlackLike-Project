@@ -3,7 +3,7 @@ Serializers for Communication APIs
 """
 
 from rest_framework import serializers
-from .models import Channel, Workspace
+from .models import Channel, Workspace, Group
 from authentication.models import User
 
 
@@ -265,4 +265,81 @@ class AddRemoveChannelsSerializer(serializers.Serializer):
                 f"Channels with IDs {list(missing_ids)} do not exist"
             )
         
+        return value
+
+
+# ====================
+# Group Serializers
+# ====================
+
+class GroupUserSerializer(serializers.ModelSerializer):
+    """Serializer for users in a group - minimal info"""
+    class Meta:
+        model = User
+        fields = ['id', 'email', 'name', 'phone_number']
+        read_only_fields = ['id', 'email', 'name', 'phone_number']
+
+
+class GroupSerializer(serializers.ModelSerializer):
+    """Serializer for Group model"""
+    created_by = CreatorSerializer(source='user', read_only=True)
+    admin = CreatorSerializer(source='group_admin', read_only=True)
+    users = GroupUserSerializer(many=True, read_only=True)
+    user_ids = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=User.objects.all(),
+        write_only=True,
+        required=False,
+        source='users'
+    )
+    users_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Group
+        fields = [
+            'id',
+            'name',
+            'slug',
+            'group_picture',
+            'created_by',
+            'admin',
+            'users',
+            'user_ids',
+            'users_count',
+            'is_active',
+            'created_at',
+            'updated_at'
+        ]
+        read_only_fields = ['id', 'slug', 'created_by', 'users_count', 'created_at', 'updated_at']
+    
+    def get_users_count(self, obj):
+        """Get the count of users in the group"""
+        return obj.users.count()
+
+
+class GroupListSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for listing groups"""
+    created_by = CreatorSerializer(source='user', read_only=True)
+    admin = CreatorSerializer(source='group_admin', read_only=True)
+    users_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Group
+        fields = ['id', 'name', 'slug', 'created_by', 'admin', 'users_count', 'is_active', 'created_at']
+        read_only_fields = ['id', 'slug', 'created_by', 'admin', 'users_count', 'created_at']
+    
+    def get_users_count(self, obj):
+        return obj.users.count()
+
+
+class GroupUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for updating group details (admin only)"""
+    class Meta:
+        model = Group
+        fields = ['name', 'group_admin', 'group_picture', 'is_active']
+    
+    def validate_group_admin(self, value):
+        """Ensure the new admin is a valid user"""
+        if value and not isinstance(value, User):
+            raise serializers.ValidationError("Invalid admin user")
         return value
