@@ -2,15 +2,82 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, List
 
+from collections import defaultdict
+import re
+
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.db.models import Count, Q
+from django.utils.text import Truncator
 
 from authentication.models import User
 from .models import Channel, Group, DirectMessageThread, ChatMessage, ChatReaction
 
 
 HISTORY_LIMIT = 50
+
+# In-process presence tracking per chat room.
+# Key: room_group_name, Value: {user_id: connection_count}
+_ACTIVE_ROOM_USERS: Dict[str, Dict[int, int]] = defaultdict(dict)
+
+
+def _presence_inc(room_group_name: str, user_id: int) -> None:
+    counts = _ACTIVE_ROOM_USERS.get(room_group_name)
+    if counts is None:
+        counts = {}
+        _ACTIVE_ROOM_USERS[room_group_name] = counts
+    counts[user_id] = int(counts.get(user_id, 0)) + 1
+
+
+def _presence_dec(room_group_name: str, user_id: int) -> None:
+    counts = _ACTIVE_ROOM_USERS.get(room_group_name)
+    if not counts:
+        return
+    new_val = int(counts.get(user_id, 0)) - 1
+    if new_val > 0:
+        counts[user_id] = new_val
+    else:
+        counts.pop(user_id, None)
+        if not counts:
+            _ACTIVE_ROOM_USERS.pop(room_group_name, None)
+
+
+def _is_user_connected(room_group_name: str, user_id: int) -> bool:
+    counts = _ACTIVE_ROOM_USERS.get(room_group_name)
+    return bool(counts and int(counts.get(user_id, 0)) > 0)
+
+
+_MENTION_EMAIL_RE = re.compile(r'@([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})')
+
+
+_MENTION_NAME_RE = re.compile(r'@([A-Za-z0-9_.\-](?:[A-Za-z0-9_.\- ]{0,62}[A-Za-z0-9_.\-])?)')
+
+
+def _normalize_name(value: Optional[str]) -> str:
+    if not value:
+        return ''
+    return ''.join(ch for ch in value.strip().lower() if not ch.isspace())
+
+
+def _extract_mentioned_names(content: str) -> List[str]:
+    """Extract @name mentions.
+
+    Mention format: @name (spaces allowed inside, no leading/trailing spaces).
+    Matching uses User.name after normalization
+    (lowercase, spaces removed).
+    """
+    if not content:
+        return []
+    names = [_normalize_name(m.group(1)) for m in _MENTION_NAME_RE.finditer(content)]
+    # De-duplicate while preserving order
+    seen = set()
+    out: List[str] = []
+    for n in names:
+        if not n or n in seen:
+            continue
+        seen.add(n)
+        out.append(n)
+    return out
 
 
 class BaseChatConsumer(AsyncJsonWebsocketConsumer):
@@ -30,6 +97,10 @@ class BaseChatConsumer(AsyncJsonWebsocketConsumer):
             return
 
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
+
+        # Mark presence for this chat room so we can suppress notifications
+        # when the user is already connected.
+        _presence_inc(self.room_group_name, int(user.id))
         await self.accept()
 
         history = await self._get_history()
@@ -38,6 +109,10 @@ class BaseChatConsumer(AsyncJsonWebsocketConsumer):
     async def disconnect(self, close_code):
         if getattr(self, 'room_group_name', None):
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
+
+            user = self.scope.get('user')
+            if user and getattr(user, 'is_authenticated', False):
+                _presence_dec(self.room_group_name, int(user.id))
 
     async def receive_json(self, content: Dict[str, Any], **kwargs):
         message_type = content.get('type')
@@ -120,6 +195,131 @@ class BaseChatConsumer(AsyncJsonWebsocketConsumer):
 
         payload = {'type': 'message.new', 'message': msg}
         await self._broadcast(payload)
+
+        # In-app notifications (delivered via websocket) for other participants.
+        try:
+            await self._create_notifications_for_message(message_id=int(msg['id']))
+        except Exception:
+            # Never break chat flow due to notifications
+            pass
+
+        # Automations: auto replies / actions for channel messages
+        try:
+            target_kwargs = await self._get_target_kwargs()
+            if target_kwargs.get('channel_id'):
+                auto_messages = await self._run_channel_message_automations(original_message_id=int(msg['id']))
+                for auto_msg in auto_messages:
+                    await self._broadcast({'type': 'message.new', 'message': auto_msg})
+        except Exception:
+            # Never break chat flow due to automations
+            pass
+
+    @database_sync_to_async
+    def _run_channel_message_automations(self, *, original_message_id: int) -> List[Dict[str, Any]]:
+        from Admin.automation_engine import run_new_channel_message
+
+        original = (
+            ChatMessage.objects.filter(id=original_message_id)
+            .select_related('sender', 'channel', 'group', 'dm_thread')
+            .first()
+        )
+        if not original or not original.channel_id:
+            return []
+
+        created = run_new_channel_message(message=original)
+        if not created:
+            return []
+
+        reply_ids = [m.id for m in created]
+        replies = (
+            ChatMessage.objects.filter(id__in=reply_ids)
+            .select_related('sender', 'reply_to__sender', 'forwarded_from__sender')
+            .prefetch_related('reactions')
+            .order_by('created_at')
+        )
+
+        return [self._serialize_message(m) for m in replies]
+
+    @database_sync_to_async
+    def _create_notifications_for_message(self, *, message_id: int) -> None:
+        from Notification.services import create_notification_for_user
+
+        message = (
+            ChatMessage.objects.filter(id=message_id)
+            .select_related('sender', 'channel', 'group', 'dm_thread')
+            .first()
+        )
+        if not message:
+            return
+
+        sender_id = message.sender_id
+        preview = Truncator(message.content or '').chars(120)
+        mentioned_names = set(_extract_mentioned_names(message.content or ''))
+
+        if message.channel_id and message.channel:
+            channel = message.channel
+            recipients = channel.users.exclude(id=sender_id)
+            for user in recipients:
+                # Suppress notifications for users already connected to this channel chat websocket.
+                if _is_user_connected(f'chat_channel_{channel.id}', int(user.id)):
+                    continue
+
+                is_mention = bool(_normalize_name(getattr(user, 'name', None)) in mentioned_names)
+                create_notification_for_user(
+                    user=user,
+                    notification_type='chat.mention' if is_mention else 'chat.channel_message',
+                    title='New message',
+                    body=preview,
+                    data={
+                        'channel_id': channel.id,
+                        'channel_name': channel.name,
+                        'message_id': message.id,
+                        'sender_id': sender_id,
+                        'is_mention': is_mention,
+                    },
+                )
+            return
+
+        if message.group_id and message.group:
+            group = message.group
+            recipients = group.users.exclude(id=sender_id)
+            for user in recipients:
+                if _is_user_connected(f'chat_group_{group.id}', int(user.id)):
+                    continue
+
+                is_mention = bool(_normalize_name(getattr(user, 'name', None)) in mentioned_names)
+                create_notification_for_user(
+                    user=user,
+                    notification_type='chat.mention' if is_mention else 'chat.group_message',
+                    title='New message',
+                    body=preview,
+                    data={
+                        'group_id': group.id,
+                        'group_name': group.name,
+                        'message_id': message.id,
+                        'sender_id': sender_id,
+                        'is_mention': is_mention,
+                    },
+                )
+            return
+
+        if message.dm_thread_id and message.dm_thread:
+            thread = message.dm_thread
+            other_user_id = thread.user_a_id if sender_id != thread.user_a_id else thread.user_b_id
+            other = User.objects.filter(id=other_user_id, is_active=True).first()
+            if not other:
+                return
+
+            if _is_user_connected(f'chat_dm_{thread.id}', int(other.id)):
+                return
+
+            create_notification_for_user(
+                user=other,
+                notification_type='chat.direct_message',
+                title='New message',
+                body=preview,
+                data={'dm_thread_id': thread.id, 'message_id': message.id, 'sender_id': sender_id},
+            )
 
     async def _handle_reaction_add(self, data: Dict[str, Any]):
         message_id = data.get('message_id')

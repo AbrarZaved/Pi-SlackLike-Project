@@ -28,6 +28,15 @@ dashboard_overview = views.DashboardViewSet.as_view({
     'get': 'overview'
 })
 
+# Activation endpoints
+admin_user_status = views.AdminUserActivationViewSet.as_view({'post': 'status'})
+admin_workspace_status = views.AdminWorkspaceActivationViewSet.as_view({'post': 'status'})
+admin_channel_status = views.AdminChannelActivationViewSet.as_view({'post': 'status'})
+
+# Automations endpoints
+automation_list = views.AutomationViewSet.as_view({'get': 'list', 'post': 'create'})
+automation_detail = views.AutomationViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update'})
+
 urlpatterns = [
     # Miscellaneous
     path('misc/', misc_list, name='miscellaneous-list'),
@@ -41,4 +50,13 @@ urlpatterns = [
     
     # Dashboard
     path('dashboard/overview/', dashboard_overview, name='dashboard-overview'),
+
+    # Activation
+    path('users/<int:pk>/status/', admin_user_status, name='admin-user-status'),
+    path('workspaces/<int:pk>/status/', admin_workspace_status, name='admin-workspace-status'),
+    path('channels/<int:pk>/status/', admin_channel_status, name='admin-channel-status'),
+
+    # Automations
+    path('automations/', automation_list, name='admin-automation-list'),
+    path('automations/<int:pk>/', automation_detail, name='admin-automation-detail'),
 ]

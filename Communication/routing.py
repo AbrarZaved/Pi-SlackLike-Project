@@ -1,6 +1,7 @@
 from django.urls import re_path
 
 from . import consumers
+from Notification.consumers import NotificationsConsumer
 
 
 websocket_urlpatterns = [
@@ -15,4 +16,7 @@ websocket_urlpatterns = [
 
     # Search people (for chat list)
     re_path(r'^ws/chat/search/$', consumers.ChatSearchConsumer.as_asgi()),
+
+	# Notifications (per-user)
+	re_path(r'^ws/notifications/$', NotificationsConsumer.as_asgi()),
 ]

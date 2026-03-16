@@ -1,4 +1,7 @@
 from django.shortcuts import render
+from django.db.models import Count, Q
+from django.utils import timezone
+from django.utils.timesince import timesince
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -58,17 +61,24 @@ class UserViewSet(viewsets.ModelViewSet):
     )
     def list(self, request):
         """List all users."""
-        users = self.get_queryset()
+        users = self.get_queryset().prefetch_related('created_workspaces')
         
         # Search filter
         search_query = request.query_params.get('search', None)
         if search_query:
-            from django.db.models import Q
             users = users.filter(
                 Q(email__icontains=search_query) |
                 Q(name__icontains=search_query) |
                 Q(phone_number__icontains=search_query)
             )
+
+        counts = users.aggregate(
+            total_users=Count('id'),
+            total_active_users=Count('id', filter=Q(is_active=True)),
+        )
+        total_users = counts.get('total_users', 0) or 0
+        total_active_users = counts.get('total_active_users', 0) or 0
+        total_inactive_users = max(total_users - total_active_users, 0)
         
         data = [
             {
@@ -78,10 +88,20 @@ class UserViewSet(viewsets.ModelViewSet):
                 'role': user.role_name,
                 'status': user.status,
                 'phone_number': user.phone_number,
+                'created_workspaces': list(user.created_workspaces.values_list('name', flat=True)),
+                'last_active': (
+                    f"{timesince(user.last_login, timezone.now())} ago" if user.last_login else None
+                ),
             }
             for user in users
         ]
-        return Response({'count': len(data), 'results': data})
+        return Response({
+            'total_users': total_users,
+            'total_active_users': total_active_users,
+            'total_inactive_users': total_inactive_users,
+            'count': len(data),
+            'results': data,
+        })
     
     @extend_schema(
         description="Create a new user",

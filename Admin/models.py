@@ -57,3 +57,94 @@ class Miscellaneous(models.Model):
     class Meta:
         verbose_name = 'Miscellaneous'
         verbose_name_plural = 'Miscellaneous'
+
+
+class Automation(models.Model):
+    TRIGGER_USER_JOINS = 'user_joins'
+    TRIGGER_NEW_MESSAGE = 'new_message'
+    TRIGGER_CHOICES = (
+        (TRIGGER_USER_JOINS, 'User Joins'),
+        (TRIGGER_NEW_MESSAGE, 'New Message'),
+    )
+
+    ACTION_SEND_MESSAGE = 'send_message'
+    ACTION_SEND_EMAIL = 'send_email'
+    ACTION_CHOICES = (
+        (ACTION_SEND_MESSAGE, 'Send Message'),
+        (ACTION_SEND_EMAIL, 'Send Email'),
+    )
+
+    name = models.CharField(max_length=255)
+    workspace = models.ForeignKey(
+        'Communication.Workspace',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='automations',
+        help_text='If set, automation only applies to this workspace. Otherwise applies to all workspaces.'
+    )
+    trigger_type = models.CharField(max_length=50, choices=TRIGGER_CHOICES)
+    action_type = models.CharField(max_length=50, choices=ACTION_CHOICES)
+    message_content = models.TextField(blank=True, null=True)
+    email_subject = models.CharField(max_length=255, blank=True, null=True)
+    is_enabled = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        'authentication.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_automations',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Automation'
+        verbose_name_plural = 'Automations'
+
+    def __str__(self):
+        return self.name
+
+
+class AutomationExecution(models.Model):
+    automation = models.ForeignKey(
+        Automation,
+        on_delete=models.CASCADE,
+        related_name='executions'
+    )
+    workspace = models.ForeignKey(
+        'Communication.Workspace',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='automation_executions'
+    )
+    channel = models.ForeignKey(
+        'Communication.Channel',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='automation_executions'
+    )
+    message = models.ForeignKey(
+        'Communication.ChatMessage',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='automation_executions'
+    )
+    target_user = models.ForeignKey(
+        'authentication.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='automation_executions'
+    )
+    success = models.BooleanField(default=True)
+    error = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Automation Execution'
+        verbose_name_plural = 'Automation Executions'
+        ordering = ['-created_at']

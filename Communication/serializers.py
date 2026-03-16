@@ -107,14 +107,19 @@ class ChannelListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for listing channels"""
     created_by = CreatorSerializer(source='user', read_only=True)
     users_count = serializers.SerializerMethodField()
+    messages_count = serializers.IntegerField(read_only=True)
+    workspaces = serializers.SerializerMethodField()
     
     class Meta:
         model = Channel
-        fields = ['id', 'name', 'type', 'created_by', 'users_count', 'created_at']
+        fields = ['id', 'name', 'type', 'created_by', 'users_count', 'messages_count', 'workspaces', 'created_at']
         read_only_fields = ['id', 'created_by', 'created_at']
     
     def get_users_count(self, obj):
         return obj.users.count()
+
+    def get_workspaces(self, obj):
+        return [{'id': ws.id, 'name': ws.name} for ws in obj.workspaces.all()]
 
 
 class AddRemoveUsersSerializer(serializers.Serializer):

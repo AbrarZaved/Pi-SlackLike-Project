@@ -95,6 +95,7 @@ INSTALLED_APPS = [
     'authentication',
     'Admin',
     'Communication',
+    'Notification.apps.NotificationConfig',
 ]
 
 MIDDLEWARE = [

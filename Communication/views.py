@@ -1,4 +1,6 @@
 from django.shortcuts import render
+from django.db.models import Count, Q
+from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -32,7 +34,7 @@ class ChannelViewSet(viewsets.ModelViewSet):
     
     Provides CRUD operations for channels and user management.
     """
-    queryset = Channel.objects.all().prefetch_related('users')
+    queryset = Channel.objects.all().prefetch_related('users', 'workspaces')
     permission_classes = [IsAuthenticated]
     
     def get_serializer_class(self):
@@ -88,13 +90,35 @@ class ChannelViewSet(viewsets.ModelViewSet):
         search = request.query_params.get('search', None)
         if search:
             queryset = queryset.filter(name__icontains=search)
+
+        queryset = queryset.annotate(messages_count=Count('messages', distinct=True))
+
+        counts = queryset.aggregate(
+            total_channels=Count('id'),
+            total_active_channels=Count('id', filter=Q(is_active=True)),
+        )
+        total_channels = counts.get('total_channels', 0) or 0
+        total_active_channels = counts.get('total_active_channels', 0) or 0
+        total_inactive_channels = max(total_channels - total_active_channels, 0)
+
+        today = timezone.localdate()
+        messages_today_count = ChatMessage.objects.filter(
+            channel__in=queryset,
+            created_at__date=today,
+        ).count()
         
         serializer = self.get_serializer(
             queryset, 
             many=True, 
             context={'request': request, 'workspace': workspace}
         )
-        return Response(serializer.data)
+        return Response({
+            'total_channels': total_channels,
+            'total_active_channels': total_active_channels,
+            'total_inactive_channels': total_inactive_channels,
+            'messages_today_count': messages_today_count,
+            'channels': serializer.data,
+        })
     
     @extend_schema(
         description="Create a new channel",
@@ -302,9 +326,22 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
         search = request.query_params.get('search', None)
         if search:
             queryset = queryset.filter(name__icontains=search)
-        
+
+        counts = queryset.aggregate(
+            total_workspaces=Count('id'),
+            total_active_workspaces=Count('id', filter=Q(is_active=True)),
+        )
+        total_workspaces = counts.get('total_workspaces', 0) or 0
+        total_active_workspaces = counts.get('total_active_workspaces', 0) or 0
+        total_inactive_workspaces = max(total_workspaces - total_active_workspaces, 0)
+
         serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
+        return Response({
+            'total_workspaces': total_workspaces,
+            'total_active_workspaces': total_active_workspaces,
+            'total_inactive_workspaces': total_inactive_workspaces,
+            'workspaces': serializer.data,
+        })
     
     @extend_schema(
         description="Create a new workspace",
@@ -508,6 +545,23 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
         # Add the authenticated user to the workspace
         if request.user not in workspace.users.all():
             workspace.users.add(request.user)
+            try:
+                from Notification.services import create_notification_for_user
+                create_notification_for_user(
+                    user=request.user,
+                    notification_type='workspace.joined',
+                    title='Joined workspace',
+                    body=workspace.name,
+                    data={'workspace_id': workspace.id, 'workspace_slug': workspace.slug},
+                )
+            except Exception:
+                pass
+            try:
+                from Admin.automation_engine import run_user_joins
+                run_user_joins(user=request.user, workspace=workspace)
+            except Exception:
+                # Automation failures should never break join flow
+                pass
             message = f'Successfully joined workspace: {workspace.name}'
         else:
             message = f'You are already a member of workspace: {workspace.name}'
@@ -560,10 +614,37 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
         
         if request.user not in workspace.users.all():
             workspace.users.add(request.user)
+            try:
+                from Notification.services import create_notification_for_user
+                create_notification_for_user(
+                    user=request.user,
+                    notification_type='workspace.joined',
+                    title='Joined workspace',
+                    body=workspace.name,
+                    data={'workspace_id': workspace.id, 'workspace_slug': workspace.slug},
+                )
+            except Exception:
+                pass
+            try:
+                from Admin.automation_engine import run_user_joins
+                run_user_joins(user=request.user, workspace=workspace)
+            except Exception:
+                pass
             messages.append(f'Added to workspace: {workspace.name}')
         
         if request.user not in channel.users.all():
             channel.users.add(request.user)
+            try:
+                from Notification.services import create_notification_for_user
+                create_notification_for_user(
+                    user=request.user,
+                    notification_type='channel.joined',
+                    title='Joined channel',
+                    body=channel.name,
+                    data={'channel_id': channel.id, 'channel_slug': channel.slug, 'workspace_id': workspace.id},
+                )
+            except Exception:
+                pass
             messages.append(f'Joined channel: {channel.name}')
         
         if not messages:

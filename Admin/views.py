@@ -1,5 +1,5 @@
 from django.shortcuts import render
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, mixins
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
@@ -15,10 +15,14 @@ from .serializers import (
     AdminProfileSerializer,
     MiscellaneousSerializer,
     MiscellaneousUpdateSerializer,
-    DashboardOverviewSerializer
+    DashboardOverviewSerializer,
+    ActivationStatusSerializer,
+    AutomationSerializer,
 )
 from Communication.models import Workspace, Channel
 from authentication.models import User
+from authentication.permissions import IsAdmin
+from .models import Automation, AutomationExecution
 
 
 # ====================
@@ -235,6 +239,144 @@ class DashboardViewSet(viewsets.ViewSet):
         
         serializer = DashboardOverviewSerializer(data)
         return Response(serializer.data)
+
+
+# ====================
+# Admin - Activate/Deactivate
+# ====================
+
+class _AdminActivationMixin:
+    """Shared helpers for activate/deactivate endpoints."""
+
+    def _set_active(self, instance, is_active: bool):
+        instance.is_active = is_active
+        instance.save(update_fields=['is_active'])
+        return Response({
+            'id': instance.id,
+            'is_active': instance.is_active,
+        })
+
+
+class AdminUserActivationViewSet(_AdminActivationMixin, viewsets.GenericViewSet):
+    queryset = User.objects.all()
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    @extend_schema(
+        description='Set a user active/inactive',
+        request=ActivationStatusSerializer,
+        tags=['Admin - Activation'],
+    )
+    @action(detail=True, methods=['post'])
+    def status(self, request, pk=None):
+        serializer = ActivationStatusSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return self._set_active(self.get_object(), serializer.validated_data['is_active'])
+
+
+class AdminWorkspaceActivationViewSet(_AdminActivationMixin, viewsets.GenericViewSet):
+    queryset = Workspace.objects.all()
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    @extend_schema(
+        description='Set a workspace active/inactive',
+        request=ActivationStatusSerializer,
+        tags=['Admin - Activation'],
+    )
+    @action(detail=True, methods=['post'])
+    def status(self, request, pk=None):
+        serializer = ActivationStatusSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return self._set_active(self.get_object(), serializer.validated_data['is_active'])
+
+
+class AdminChannelActivationViewSet(_AdminActivationMixin, viewsets.GenericViewSet):
+    queryset = Channel.objects.all()
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    @extend_schema(
+        description='Set a channel active/inactive',
+        request=ActivationStatusSerializer,
+        tags=['Admin - Activation'],
+    )
+    @action(detail=True, methods=['post'])
+    def status(self, request, pk=None):
+        serializer = ActivationStatusSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return self._set_active(self.get_object(), serializer.validated_data['is_active'])
+
+
+# ====================
+# Admin - Automations
+# ====================
+
+
+class AutomationViewSet(
+    mixins.ListModelMixin,
+    mixins.CreateModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
+    viewsets.GenericViewSet,
+):
+    queryset = Automation.objects.all().select_related('workspace', 'created_by')
+    serializer_class = AutomationSerializer
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    @extend_schema(
+        description='List automations with summary metrics',
+        parameters=[
+            OpenApiParameter(
+                name='workspace_id',
+                type=OpenApiTypes.INT,
+                description='Optional workspace filter (business)',
+                required=False,
+            )
+        ],
+        tags=['Admin - Automations'],
+    )
+    def list(self, request, *args, **kwargs):
+        qs = self.get_queryset()
+        workspace_id = request.query_params.get('workspace_id')
+        if workspace_id:
+            qs = qs.filter(Q(workspace_id=workspace_id) | Q(workspace__isnull=True))
+
+        qs = qs.annotate(executions_count=Count('executions'))
+
+        executions_qs = AutomationExecution.objects.all()
+        if workspace_id:
+            executions_qs = executions_qs.filter(workspace_id=workspace_id)
+
+        total_executions = executions_qs.count()
+        successful_executions = executions_qs.filter(success=True).count()
+        success_rate = (successful_executions / total_executions * 100.0) if total_executions else 0.0
+
+        active_automations = qs.filter(is_enabled=True).count()
+
+        # Simple heuristic: assume 1 minute saved per execution.
+        time_saved_hours = round((total_executions / 60.0), 2)
+
+        serializer = self.get_serializer(qs.order_by('-updated_at'), many=True)
+        return Response({
+            'active_automations': active_automations,
+            'total_executions': total_executions,
+            'success_rate': round(success_rate, 2),
+            'time_saved_hours': time_saved_hours,
+            'automations': serializer.data,
+        })
+
+    @extend_schema(description='Create a new automation', tags=['Admin - Automations'])
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+
+    @extend_schema(description='Get automation details', tags=['Admin - Automations'])
+    def retrieve(self, request, *args, **kwargs):
+        obj = self.get_object()
+        obj.executions_count = obj.executions.count()
+        serializer = self.get_serializer(obj)
+        return Response(serializer.data)
+
+    @extend_schema(description='Update automation (partial)', tags=['Admin - Automations'])
+    def partial_update(self, request, *args, **kwargs):
+        return super().partial_update(request, *args, **kwargs)
     
     def _calculate_growth(self, current, previous):
         """Calculate percentage growth"""
