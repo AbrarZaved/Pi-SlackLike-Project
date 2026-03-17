@@ -24,6 +24,12 @@ from .serializers import (
 from authentication.models import User
 
 
+def _is_admin_user(user) -> bool:
+    """Return True if the user should receive admin-only list summaries."""
+    role = getattr(user, 'role', None)
+    return bool(role and getattr(role, 'slug', None) == 'admin')
+
+
 # ====================
 # Channel ViewSet
 # ====================
@@ -69,7 +75,9 @@ class ChannelViewSet(viewsets.ModelViewSet):
     )
     def list(self, request):
         """List all channels with optional filters"""
-        queryset = self.get_queryset()
+        queryset = self.get_queryset().filter(
+            Q(user=request.user) | Q(users=request.user)
+        ).distinct()
         
         # Filter by workspace
         workspace_id = request.query_params.get('workspace_id', None)
@@ -92,33 +100,40 @@ class ChannelViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(name__icontains=search)
 
         queryset = queryset.annotate(messages_count=Count('messages', distinct=True))
-
-        counts = queryset.aggregate(
-            total_channels=Count('id'),
-            total_active_channels=Count('id', filter=Q(is_active=True)),
-        )
-        total_channels = counts.get('total_channels', 0) or 0
-        total_active_channels = counts.get('total_active_channels', 0) or 0
-        total_inactive_channels = max(total_channels - total_active_channels, 0)
-
-        today = timezone.localdate()
-        messages_today_count = ChatMessage.objects.filter(
-            channel__in=queryset,
-            created_at__date=today,
-        ).count()
         
         serializer = self.get_serializer(
             queryset, 
             many=True, 
             context={'request': request, 'workspace': workspace}
         )
-        return Response({
-            'total_channels': total_channels,
-            'total_active_channels': total_active_channels,
-            'total_inactive_channels': total_inactive_channels,
-            'messages_today_count': messages_today_count,
+
+        response_data = {
             'channels': serializer.data,
-        })
+        }
+
+        if _is_admin_user(request.user):
+            counts = queryset.aggregate(
+                total_channels=Count('id'),
+                total_active_channels=Count('id', filter=Q(is_active=True)),
+            )
+            total_channels = counts.get('total_channels', 0) or 0
+            total_active_channels = counts.get('total_active_channels', 0) or 0
+            total_inactive_channels = max(total_channels - total_active_channels, 0)
+
+            today = timezone.localdate()
+            messages_today_count = ChatMessage.objects.filter(
+                channel__in=queryset,
+                created_at__date=today,
+            ).count()
+
+            response_data.update({
+                'total_channels': total_channels,
+                'total_active_channels': total_active_channels,
+                'total_inactive_channels': total_inactive_channels,
+                'messages_today_count': messages_today_count,
+            })
+
+        return Response(response_data)
     
     @extend_schema(
         description="Create a new channel",
@@ -219,8 +234,51 @@ class ChannelViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         user_ids = serializer.validated_data['user_ids']
+        # Ensure all users exist (validated by serializer) and are members of a workspace
+        # that contains this channel.
+        workspace_ids = list(channel.workspaces.values_list('id', flat=True))
+        if workspace_ids:
+            allowed_user_ids = set(
+                User.objects.filter(
+                    id__in=user_ids,
+                    workspaces__id__in=workspace_ids,
+                ).values_list('id', flat=True)
+            )
+            missing_from_workspace = sorted(set(user_ids) - allowed_user_ids)
+            if missing_from_workspace:
+                return Response(
+                    {
+                        'error': 'All users must be members of the workspace before being added to the channel.',
+                        'missing_workspace_user_ids': missing_from_workspace,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         users = User.objects.filter(id__in=user_ids)
+
+        existing_user_ids = set(channel.users.values_list('id', flat=True))
+        new_users = [u for u in users if u.id not in existing_user_ids]
         channel.users.add(*users)
+
+        # Notify only users who were newly added
+        if new_users:
+            try:
+                from Notification.services import create_notification_for_user
+                for added_user in new_users:
+                    create_notification_for_user(
+                        user=added_user,
+                        notification_type='channel.added',
+                        title='Added to channel',
+                        body=channel.name,
+                        data={
+                            'channel_id': channel.id,
+                            'channel_slug': channel.slug,
+                            'added_by_user_id': request.user.id,
+                        },
+                    )
+            except Exception:
+                # Never break membership management due to notification system
+                pass
         
         response_serializer = ChannelSerializer(channel)
         return Response({
@@ -320,28 +378,35 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
     )
     def list(self, request):
         """List all workspaces with optional filters"""
-        queryset = self.get_queryset()
+        queryset = self.get_queryset().filter(
+            Q(user=request.user) | Q(users=request.user)
+        ).distinct()
         
         # Search by name
         search = request.query_params.get('search', None)
         if search:
             queryset = queryset.filter(name__icontains=search)
-
-        counts = queryset.aggregate(
-            total_workspaces=Count('id'),
-            total_active_workspaces=Count('id', filter=Q(is_active=True)),
-        )
-        total_workspaces = counts.get('total_workspaces', 0) or 0
-        total_active_workspaces = counts.get('total_active_workspaces', 0) or 0
-        total_inactive_workspaces = max(total_workspaces - total_active_workspaces, 0)
-
         serializer = self.get_serializer(queryset, many=True)
-        return Response({
-            'total_workspaces': total_workspaces,
-            'total_active_workspaces': total_active_workspaces,
-            'total_inactive_workspaces': total_inactive_workspaces,
+
+        response_data = {
             'workspaces': serializer.data,
-        })
+        }
+
+        if _is_admin_user(request.user):
+            counts = queryset.aggregate(
+                total_workspaces=Count('id'),
+                total_active_workspaces=Count('id', filter=Q(is_active=True)),
+            )
+            total_workspaces = counts.get('total_workspaces', 0) or 0
+            total_active_workspaces = counts.get('total_active_workspaces', 0) or 0
+            total_inactive_workspaces = max(total_workspaces - total_active_workspaces, 0)
+            response_data.update({
+                'total_workspaces': total_workspaces,
+                'total_active_workspaces': total_active_workspaces,
+                'total_inactive_workspaces': total_inactive_workspaces,
+            })
+
+        return Response(response_data)
     
     @extend_schema(
         description="Create a new workspace",
@@ -421,7 +486,28 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
         
         user_ids = serializer.validated_data['user_ids']
         users = User.objects.filter(id__in=user_ids)
+        existing_user_ids = set(workspace.users.values_list('id', flat=True))
+        new_users = [u for u in users if u.id not in existing_user_ids]
         workspace.users.add(*users)
+
+        # Notify only users who were newly added
+        if new_users:
+            try:
+                from Notification.services import create_notification_for_user
+                for added_user in new_users:
+                    create_notification_for_user(
+                        user=added_user,
+                        notification_type='workspace.added',
+                        title='Added to workspace',
+                        body=workspace.name,
+                        data={
+                            'workspace_id': workspace.id,
+                            'workspace_slug': workspace.slug,
+                            'added_by_user_id': request.user.id,
+                        },
+                    )
+            except Exception:
+                pass
         
         response_serializer = WorkspaceSerializer(workspace)
         return Response({

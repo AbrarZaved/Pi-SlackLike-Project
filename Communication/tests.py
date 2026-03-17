@@ -1,6 +1,6 @@
 from django.urls import reverse
 from rest_framework import status
-from rest_framework.test import APITestCase
+from rest_framework.test import APITestCase, APIClient
 
 from authentication.models import User
 from django.utils import timezone
@@ -15,19 +15,39 @@ from rest_framework_simplejwt.tokens import AccessToken
 from Pi.asgi import application
 from Admin.models import Automation
 from Notification.models import Notification
+from Notification.models import SystemSettings
 
 from .models import Workspace, Channel, ChatMessage
 
 
+def _ensure_admin_role():
+	"""Create an Admin role if it doesn't exist (used by tests)."""
+	from authentication.models import Role
+	role, _ = Role.objects.get_or_create(
+		slug='admin',
+		defaults={
+			'name': 'Admin',
+			'description': 'Administrator with full access',
+			'is_system_role': True,
+		},
+	)
+	return role
+
+
 class WorkspaceListSummaryTests(APITestCase):
 	def setUp(self):
-		self.user = User.objects.create_user(email='test@example.com', password='password123')
+		admin_role = _ensure_admin_role()
+		self.user = User.objects.create_user(
+			email='test@example.com',
+			password='password123',
+			role=admin_role,
+		)
 		self.client.force_authenticate(user=self.user)
 
 	def test_workspace_list_includes_total_active_inactive_counts(self):
-		Workspace.objects.create(name='WS 1', is_active=True)
-		Workspace.objects.create(name='WS 2', is_active=True)
-		Workspace.objects.create(name='WS 3', is_active=False)
+		Workspace.objects.create(name='WS 1', is_active=True, user=self.user)
+		Workspace.objects.create(name='WS 2', is_active=True, user=self.user)
+		Workspace.objects.create(name='WS 3', is_active=False, user=self.user)
 
 		url = reverse('workspace-list')
 		response = self.client.get(url)
@@ -44,9 +64,9 @@ class WorkspaceListSummaryTests(APITestCase):
 		self.assertEqual(len(response.data['workspaces']), 3)
 
 	def test_workspace_list_counts_respect_search_filter(self):
-		Workspace.objects.create(name='Alpha', is_active=True)
-		Workspace.objects.create(name='Alpha Two', is_active=False)
-		Workspace.objects.create(name='Beta', is_active=False)
+		Workspace.objects.create(name='Alpha', is_active=True, user=self.user)
+		Workspace.objects.create(name='Alpha Two', is_active=False, user=self.user)
+		Workspace.objects.create(name='Beta', is_active=False, user=self.user)
 
 		url = reverse('workspace-list')
 		response = self.client.get(url, {'search': 'alpha'})
@@ -58,17 +78,55 @@ class WorkspaceListSummaryTests(APITestCase):
 		self.assertEqual(len(response.data['workspaces']), 2)
 
 
+class WorkspaceListNonAdminResponseTests(APITestCase):
+	def setUp(self):
+		self.user = User.objects.create_user(email='nonadmin@example.com', password='password123')
+		self.client.force_authenticate(user=self.user)
+
+	def test_workspace_list_hides_summary_fields_for_non_admin(self):
+		Workspace.objects.create(name='WS 1', is_active=True, user=self.user)
+		url = reverse('workspace-list')
+		response = self.client.get(url)
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		self.assertIn('workspaces', response.data)
+		self.assertNotIn('total_workspaces', response.data)
+		self.assertNotIn('total_active_workspaces', response.data)
+		self.assertNotIn('total_inactive_workspaces', response.data)
+
+	def test_workspace_list_only_returns_created_or_joined(self):
+		created = Workspace.objects.create(name='Created', is_active=True, user=self.user)
+		joined = Workspace.objects.create(name='Joined', is_active=True)
+		joined.users.add(self.user)
+		Workspace.objects.create(name='Other', is_active=True)
+
+		url = reverse('workspace-list')
+		response = self.client.get(url)
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+		names = {ws['name'] for ws in response.data['workspaces']}
+		self.assertEqual(names, {created.name, joined.name})
+
+
 class ChannelListSummaryTests(APITestCase):
 	def setUp(self):
-		self.user = User.objects.create_user(email='channels@example.com', password='password123')
+		admin_role = _ensure_admin_role()
+		self.user = User.objects.create_user(
+			email='channels@example.com',
+			password='password123',
+			role=admin_role,
+		)
 		self.client.force_authenticate(user=self.user)
 
 	def test_channel_list_includes_total_active_inactive_counts(self):
-		ws = Workspace.objects.create(name='WS')
-		c1 = Channel.objects.create(name='C1', type='public', is_active=True)
-		c2 = Channel.objects.create(name='C2', type='private', is_active=False)
-		c3 = Channel.objects.create(name='C3', type='public', is_active=True)
+		ws = Workspace.objects.create(name='WS', user=self.user)
+		c1 = Channel.objects.create(name='C1', type='public', is_active=True, user=self.user)
+		c2 = Channel.objects.create(name='C2', type='private', is_active=False, user=self.user)
+		c3 = Channel.objects.create(name='C3', type='public', is_active=True, user=self.user)
 		ws.channels.add(c1, c2, c3)
+		c1.users.add(self.user)
+		c2.users.add(self.user)
+		c3.users.add(self.user)
 
 		# Messages: 2 today for c1, 1 yesterday for c2
 		ChatMessage.objects.create(sender=self.user, channel=c1, content='m1')
@@ -97,11 +155,14 @@ class ChannelListSummaryTests(APITestCase):
 		self.assertIn('messages_count', first)
 
 	def test_channel_list_counts_respect_type_filter(self):
-		ws = Workspace.objects.create(name='WS')
-		pub = Channel.objects.create(name='Public 1', type='public', is_active=True)
-		p1 = Channel.objects.create(name='Private 1', type='private', is_active=True)
-		p2 = Channel.objects.create(name='Private 2', type='private', is_active=False)
+		ws = Workspace.objects.create(name='WS', user=self.user)
+		pub = Channel.objects.create(name='Public 1', type='public', is_active=True, user=self.user)
+		p1 = Channel.objects.create(name='Private 1', type='private', is_active=True, user=self.user)
+		p2 = Channel.objects.create(name='Private 2', type='private', is_active=False, user=self.user)
 		ws.channels.add(pub, p1, p2)
+		pub.users.add(self.user)
+		p1.users.add(self.user)
+		p2.users.add(self.user)
 
 		ChatMessage.objects.create(sender=self.user, channel=p1, content='today')
 
@@ -118,6 +179,152 @@ class ChannelListSummaryTests(APITestCase):
 		for ch in response.data['channels']:
 			self.assertIn('workspaces', ch)
 			self.assertIn('messages_count', ch)
+
+
+class ChannelListNonAdminResponseTests(APITestCase):
+	def setUp(self):
+		self.user = User.objects.create_user(email='channels-nonadmin@example.com', password='password123')
+		self.client.force_authenticate(user=self.user)
+
+	def test_channel_list_hides_summary_fields_for_non_admin(self):
+		ws = Workspace.objects.create(name='WS', user=self.user)
+		c1 = Channel.objects.create(name='C1', type='public', is_active=True, user=self.user)
+		ws.channels.add(c1)
+		c1.users.add(self.user)
+
+		url = reverse('channel-list')
+		response = self.client.get(url)
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		self.assertIn('channels', response.data)
+		self.assertNotIn('total_channels', response.data)
+		self.assertNotIn('total_active_channels', response.data)
+		self.assertNotIn('total_inactive_channels', response.data)
+		self.assertNotIn('messages_today_count', response.data)
+
+	def test_channel_list_only_returns_created_or_joined(self):
+		ws = Workspace.objects.create(name='WS')
+		created = Channel.objects.create(name='Created', type='public', is_active=True, user=self.user)
+		joined = Channel.objects.create(name='Joined', type='public', is_active=True)
+		other = Channel.objects.create(name='Other', type='public', is_active=True)
+		ws.channels.add(created, joined, other)
+		joined.users.add(self.user)
+
+		url = reverse('channel-list')
+		response = self.client.get(url)
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		returned_names = {ch['name'] for ch in response.data['channels']}
+		self.assertEqual(returned_names, {created.name, joined.name})
+
+
+class ChannelAddUsersWorkspaceMembershipGuardTests(APITestCase):
+	def setUp(self):
+		self.adder = User.objects.create_user(email='adder-guard@example.com', password='password123')
+		self.target = User.objects.create_user(email='target-guard@example.com', password='password123')
+		self.workspace = Workspace.objects.create(name='WS Guard', user=self.adder)
+		self.channel = Channel.objects.create(name='C Guard', type='public', is_active=True, user=self.adder)
+		self.workspace.channels.add(self.channel)
+		self.workspace.users.add(self.adder)
+		self.client.force_authenticate(user=self.adder)
+
+	def test_cannot_add_user_to_channel_if_not_in_workspace(self):
+		url = reverse('channel-add-users', args=[self.channel.id])
+		resp = self.client.post(url, {'user_ids': [self.target.id]}, format='json')
+		self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+		self.assertIn('missing_workspace_user_ids', resp.data)
+		self.assertIn(self.target.id, resp.data['missing_workspace_user_ids'])
+		self.assertFalse(self.channel.users.filter(id=self.target.id).exists())
+
+	def test_can_add_user_after_adding_to_workspace(self):
+		self.workspace.users.add(self.target)
+		url = reverse('channel-add-users', args=[self.channel.id])
+		resp = self.client.post(url, {'user_ids': [self.target.id]}, format='json')
+		self.assertEqual(resp.status_code, status.HTTP_200_OK)
+		self.assertTrue(self.channel.users.filter(id=self.target.id).exists())
+
+
+class MembershipAddedNotificationWebsocketTests(TransactionTestCase):
+	reset_sequences = True
+
+	def setUp(self):
+		# Ensure notification broadcasting is enabled for these tests
+		SystemSettings.objects.update_or_create(id=1, defaults={'push_notifications_enabled': True})
+
+	def test_notification_sent_when_user_added_to_workspace(self):
+		adder = User.objects.create_user(email='adder-ws@example.com', password='password123')
+		added = User.objects.create_user(email='added-ws@example.com', password='password123')
+		workspace = Workspace.objects.create(name='WS', user=adder)
+
+		token = str(AccessToken.for_user(added))
+		async_to_sync(self._assert_workspace_add_notification)(
+			token=token,
+			adder_id=adder.id,
+			added_id=added.id,
+			workspace_id=workspace.id,
+		)
+
+	def test_notification_sent_when_user_added_to_channel(self):
+		adder = User.objects.create_user(email='adder-ch@example.com', password='password123')
+		added = User.objects.create_user(email='added-ch@example.com', password='password123')
+		channel = Channel.objects.create(name='General', type='public', is_active=True, user=adder)
+
+		token = str(AccessToken.for_user(added))
+		async_to_sync(self._assert_channel_add_notification)(
+			token=token,
+			adder_id=adder.id,
+			added_id=added.id,
+			channel_id=channel.id,
+		)
+
+	def _post_add_users(self, *, adder_id: int, url: str, added_id: int) -> int:
+		adder = User.objects.get(id=adder_id)
+		client = APIClient()
+		client.force_authenticate(user=adder)
+		resp = client.post(url, {'user_ids': [added_id]}, format='json')
+		return int(resp.status_code)
+
+	async def _assert_workspace_add_notification(self, *, token: str, adder_id: int, added_id: int, workspace_id: int):
+		communicator = WebsocketCommunicator(application, f"/ws/notifications/?token={token}")
+		connected, _ = await communicator.connect()
+		self.assertTrue(connected)
+
+		init = await communicator.receive_json_from()
+		self.assertEqual(init.get('type'), 'notifications.init')
+
+		url = reverse('workspace-add-users', args=[workspace_id])
+		status_code = await database_sync_to_async(self._post_add_users)(
+			adder_id=adder_id,
+			url=url,
+			added_id=added_id,
+		)
+		self.assertEqual(status_code, status.HTTP_200_OK)
+
+		event = await communicator.receive_json_from()
+		self.assertEqual(event.get('type'), 'notification.new')
+		self.assertEqual(event['notification']['notification_type'], 'workspace.added')
+
+		await communicator.disconnect()
+
+	async def _assert_channel_add_notification(self, *, token: str, adder_id: int, added_id: int, channel_id: int):
+		communicator = WebsocketCommunicator(application, f"/ws/notifications/?token={token}")
+		connected, _ = await communicator.connect()
+		self.assertTrue(connected)
+
+		init = await communicator.receive_json_from()
+		self.assertEqual(init.get('type'), 'notifications.init')
+
+		url = reverse('channel-add-users', args=[channel_id])
+		status_code = await database_sync_to_async(self._post_add_users)(
+			adder_id=adder_id,
+			url=url,
+			added_id=added_id,
+		)
+		self.assertEqual(status_code, status.HTTP_200_OK)
+
+		event = await communicator.receive_json_from()
+		self.assertEqual(event.get('type'), 'notification.new')
+		self.assertEqual(event['notification']['notification_type'], 'channel.added')
+
+		await communicator.disconnect()
 
 
 class ChannelWelcomeAutomationWebsocketTests(TransactionTestCase):
