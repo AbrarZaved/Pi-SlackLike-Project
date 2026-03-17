@@ -7,11 +7,12 @@ import re
 
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.db import database_sync_to_async
+from django.db import transaction
 from django.db.models import Count, Q
 from django.utils.text import Truncator
 
 from authentication.models import User
-from .models import Channel, Group, DirectMessageThread, ChatMessage, ChatReaction
+from .models import Channel, Group, DirectMessageThread, ChatMessage, ChatReaction, ChatAttachment
 
 
 HISTORY_LIMIT = 50
@@ -144,6 +145,28 @@ class BaseChatConsumer(AsyncJsonWebsocketConsumer):
             raise ValueError(f"{field_name} is required")
         return parsed
 
+    def _parse_int_list(self, value: Any, field_name: str, *, max_items: int = 10) -> List[int]:
+        if value is None or value == '':
+            return []
+        if not isinstance(value, list):
+            raise ValueError(f"{field_name} must be a list")
+        if len(value) > max_items:
+            raise ValueError(f"{field_name} can include at most {max_items} items")
+
+        out: List[int] = []
+        for raw in value:
+            out.append(self._parse_required_int(raw, field_name))
+
+        # De-dupe while preserving order
+        seen = set()
+        uniq: List[int] = []
+        for i in out:
+            if i in seen:
+                continue
+            seen.add(i)
+            uniq.append(i)
+        return uniq
+
     async def chat_event(self, event: Dict[str, Any]):
         await self.send_json(event['payload'])
 
@@ -176,22 +199,28 @@ class BaseChatConsumer(AsyncJsonWebsocketConsumer):
         try:
             reply_to_id = self._parse_optional_int(data.get('reply_to'), 'reply_to')
             forward_from_id = self._parse_optional_int(data.get('forward_from'), 'forward_from')
+            attachment_ids = self._parse_int_list(data.get('attachment_ids'), 'attachment_ids')
         except ValueError as e:
             await self.send_json({'type': 'error', 'message': str(e)})
             return
 
-        if not content and not forward_from_id:
-            await self.send_json({'type': 'error', 'message': 'content is required unless forwarding'})
+        if not content and not forward_from_id and not attachment_ids:
+            await self.send_json({'type': 'error', 'message': 'content is required unless forwarding or attaching media'})
             return
 
         user: User = self.scope['user']
 
-        msg = await self._create_message(
+        try:
+            msg = await self._create_message(
             sender_id=user.id,
             content=content,
             reply_to_id=reply_to_id,
             forward_from_id=forward_from_id,
+            attachment_ids=attachment_ids,
         )
+        except ValueError as e:
+            await self.send_json({'type': 'error', 'message': str(e)})
+            return
 
         payload = {'type': 'message.new', 'message': msg}
         await self._broadcast(payload)
@@ -376,7 +405,7 @@ class BaseChatConsumer(AsyncJsonWebsocketConsumer):
         qs = (
             ChatMessage.objects.filter(**target_kwargs)
             .select_related('sender', 'reply_to__sender', 'forwarded_from__sender')
-            .prefetch_related('reactions')
+            .prefetch_related('reactions', 'attachments')
             .order_by('-created_at')[:HISTORY_LIMIT]
         )
 
@@ -395,6 +424,7 @@ class BaseChatConsumer(AsyncJsonWebsocketConsumer):
         content: str,
         reply_to_id: Optional[int],
         forward_from_id: Optional[int],
+        attachment_ids: List[int],
     ) -> Dict[str, Any]:
         target_kwargs = self._sync_get_target_kwargs()
 
@@ -410,18 +440,32 @@ class BaseChatConsumer(AsyncJsonWebsocketConsumer):
             if candidate and self._sync_is_same_target(candidate):
                 forwarded_from = candidate
 
-        msg = ChatMessage.objects.create(
-            sender_id=sender_id,
-            content=content,
-            reply_to=reply_to,
-            forwarded_from=forwarded_from,
-            **target_kwargs,
-        )
+        with transaction.atomic():
+            msg = ChatMessage.objects.create(
+                sender_id=sender_id,
+                content=content,
+                reply_to=reply_to,
+                forwarded_from=forwarded_from,
+                **target_kwargs,
+            )
+
+            if attachment_ids:
+                locked = list(
+                    ChatAttachment.objects.select_for_update()
+                    .filter(
+                        id__in=attachment_ids,
+                        uploaded_by_id=sender_id,
+                        message__isnull=True,
+                    )
+                )
+                if len(locked) != len(attachment_ids):
+                    raise ValueError('Invalid attachment_ids (not found, not yours, or already used)')
+                ChatAttachment.objects.filter(id__in=[a.id for a in locked]).update(message=msg)
 
         msg = (
             ChatMessage.objects.filter(id=msg.id)
             .select_related('sender', 'reply_to__sender', 'forwarded_from__sender')
-            .prefetch_related('reactions')
+            .prefetch_related('reactions', 'attachments')
             .get()
         )
 
@@ -473,6 +517,21 @@ class BaseChatConsumer(AsyncJsonWebsocketConsumer):
 
         reactions = self._serialize_reactions_sync(msg.id, self.scope['user'].id)
 
+        attachments: List[Dict[str, Any]] = []
+        for att in getattr(msg, 'attachments', []).all():
+            url = att.file.url if att.file else None
+            attachments.append(
+                {
+                    'id': att.id,
+                    'kind': att.kind,
+                    'url': url,
+                    'original_name': att.original_name,
+                    'content_type': att.content_type,
+                    'size': att.size,
+                    'created_at': att.created_at.isoformat() if att.created_at else None,
+                }
+            )
+
         return {
             'id': msg.id,
             'content': msg.content,
@@ -485,6 +544,7 @@ class BaseChatConsumer(AsyncJsonWebsocketConsumer):
             'reply_to': reply_to,
             'forwarded_from': forwarded_from,
             'reactions': reactions,
+            'attachments': attachments,
         }
 
     def _serialize_reactions_sync(self, message_id: int, user_id: int) -> List[Dict[str, Any]]:

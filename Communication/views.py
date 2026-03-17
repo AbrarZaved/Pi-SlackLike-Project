@@ -2,13 +2,15 @@ from django.shortcuts import render
 from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework import viewsets, status
+from rest_framework.views import APIView
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
-from .models import Channel, Workspace, Group, ChatMessage, DirectMessageThread
+from .models import Channel, Workspace, Group, ChatMessage, DirectMessageThread, ChatAttachment
 from .serializers import (
     ChannelSerializer,
     ChannelListSerializer,
@@ -19,7 +21,9 @@ from .serializers import (
     GroupSerializer,
     GroupListSerializer,
     GroupUpdateSerializer,
-    ChatMessageHistorySerializer
+    ChatMessageHistorySerializer,
+    ChatAttachmentUploadSerializer,
+    ChatAttachmentSerializer,
 )
 from authentication.models import User
 
@@ -1050,8 +1054,10 @@ class ChatViewSet(viewsets.ViewSet):
         limit = self._parse_limit(request)
         before_id = self._parse_before_id(request)
 
-        qs = ChatMessage.objects.filter(channel_id=channel_id).select_related(
-            'sender', 'reply_to__sender', 'forwarded_from__sender'
+        qs = (
+            ChatMessage.objects.filter(channel_id=channel_id)
+            .select_related('sender', 'reply_to__sender', 'forwarded_from__sender')
+            .prefetch_related('attachments')
         )
         if before_id:
             qs = qs.filter(id__lt=before_id)
@@ -1072,8 +1078,10 @@ class ChatViewSet(viewsets.ViewSet):
         limit = self._parse_limit(request)
         before_id = self._parse_before_id(request)
 
-        qs = ChatMessage.objects.filter(group_id=group_id).select_related(
-            'sender', 'reply_to__sender', 'forwarded_from__sender'
+        qs = (
+            ChatMessage.objects.filter(group_id=group_id)
+            .select_related('sender', 'reply_to__sender', 'forwarded_from__sender')
+            .prefetch_related('attachments')
         )
         if before_id:
             qs = qs.filter(id__lt=before_id)
@@ -1100,8 +1108,10 @@ class ChatViewSet(viewsets.ViewSet):
         limit = self._parse_limit(request)
         before_id = self._parse_before_id(request)
 
-        qs = ChatMessage.objects.filter(dm_thread=thread).select_related(
-            'sender', 'reply_to__sender', 'forwarded_from__sender'
+        qs = (
+            ChatMessage.objects.filter(dm_thread=thread)
+            .select_related('sender', 'reply_to__sender', 'forwarded_from__sender')
+            .prefetch_related('attachments')
         )
         if before_id:
             qs = qs.filter(id__lt=before_id)
@@ -1110,4 +1120,36 @@ class ChatViewSet(viewsets.ViewSet):
         items.reverse()
         serializer = ChatMessageHistorySerializer(items, many=True, context={'request': request})
         return Response({'thread_id': thread.id, 'messages': serializer.data})
+
+
+class ChatUploadView(APIView):
+    """Multipart upload endpoint for chat attachments."""
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    @extend_schema(
+        description="Upload a file to be attached to a chat message. Returns an attachment id to use in websocket message.send.",
+        request=ChatAttachmentUploadSerializer,
+        responses={201: ChatAttachmentSerializer},
+        tags=['Chat'],
+    )
+    def post(self, request):
+        ser = ChatAttachmentUploadSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+
+        uploaded = ser.validated_data['file']
+        kind = ser.validated_data.get('kind', ChatAttachment.KIND_FILE)
+
+        att = ChatAttachment.objects.create(
+            uploaded_by=request.user,
+            file=uploaded,
+            kind=kind,
+            original_name=getattr(uploaded, 'name', '') or '',
+            content_type=getattr(uploaded, 'content_type', '') or '',
+            size=int(getattr(uploaded, 'size', 0) or 0),
+        )
+
+        out = ChatAttachmentSerializer(att, context={'request': request}).data
+        return Response(out, status=status.HTTP_201_CREATED)
 

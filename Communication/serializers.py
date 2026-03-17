@@ -3,7 +3,7 @@ Serializers for Communication APIs
 """
 
 from rest_framework import serializers
-from .models import Channel, Workspace, Group, ChatMessage, ChatReaction, DirectMessageThread
+from .models import Channel, Workspace, Group, ChatMessage, ChatReaction, DirectMessageThread, ChatAttachment
 from authentication.models import User
 
 
@@ -365,10 +365,11 @@ class ChatMessageHistorySerializer(serializers.ModelSerializer):
     reply_to = serializers.SerializerMethodField()
     forwarded_from = serializers.SerializerMethodField()
     reactions = serializers.SerializerMethodField()
+    attachments = serializers.SerializerMethodField()
 
     class Meta:
         model = ChatMessage
-        fields = ['id', 'content', 'created_at', 'updated_at', 'sender', 'reply_to', 'forwarded_from', 'reactions']
+        fields = ['id', 'content', 'created_at', 'updated_at', 'sender', 'reply_to', 'forwarded_from', 'reactions', 'attachments']
 
     def _mini_ref(self, msg: ChatMessage):
         return {
@@ -411,3 +412,47 @@ class ChatMessageHistorySerializer(serializers.ModelSerializer):
             ChatReaction.objects.filter(message=obj, user_id=user_id).values_list('emoji', flat=True)
         )
         return [{'emoji': r['emoji'], 'count': r['count'], 'me': r['emoji'] in mine} for r in qs]
+
+    def get_attachments(self, obj: ChatMessage):
+        request = self.context.get('request')
+        out = []
+        for att in getattr(obj, 'attachments', []).all():
+            url = att.file.url if att.file else None
+            if url and request:
+                url = request.build_absolute_uri(url)
+            out.append(
+                {
+                    'id': att.id,
+                    'kind': att.kind,
+                    'url': url,
+                    'original_name': att.original_name,
+                    'content_type': att.content_type,
+                    'size': att.size,
+                    'created_at': att.created_at,
+                }
+            )
+        return out
+
+
+class ChatAttachmentUploadSerializer(serializers.Serializer):
+    file = serializers.FileField(required=True)
+    kind = serializers.ChoiceField(
+        choices=[c[0] for c in ChatAttachment.KIND_CHOICES],
+        required=False,
+        default=ChatAttachment.KIND_FILE,
+    )
+
+
+class ChatAttachmentSerializer(serializers.ModelSerializer):
+    url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ChatAttachment
+        fields = ['id', 'kind', 'url', 'original_name', 'content_type', 'size', 'created_at']
+
+    def get_url(self, obj: ChatAttachment):
+        if not obj.file:
+            return None
+        request = self.context.get('request')
+        url = obj.file.url
+        return request.build_absolute_uri(url) if request else url

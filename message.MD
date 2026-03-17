@@ -1,16 +1,12 @@
-Here is a clean **Markdown (`.md`) version** of your documentation. You can save it as something like `websocket_protocol.md`.
-
-````md
 # Realtime Chat WebSocket Protocol
 
-This document describes the WebSocket message protocol used for realtime chat features such as sending messages, reactions, history loading, and people search.
+This document describes the WebSocket message protocol used for realtime chat features such as sending messages, reactions, and history loading.
 
 ---
 
-# 1. Send a Chat Message
+## 1) Send a Chat Message
 
-Client → Server  
-(Channel / Group / DM all use the same payload)
+Client → Server (Channel / Group / DM all use the same payload shape)
 
 ```json
 {
@@ -18,7 +14,6 @@ Client → Server
   "content": "Hello"
 }
 ```
-````
 
 ### Optional: Reply to a Message
 
@@ -45,14 +40,100 @@ You can forward a message even with empty content.
 
 Server sends the new message to everyone in the room.
 
-````json
+```json
 {
+  "type": "message.new",
+  "message": {
+    "id": 456,
+    "content": "Hello",
+    "created_at": "2026-03-14T08:40:12.123456+00:00",
+    "sender": {
+      "id": 1,
+      "name": "Alice",
+      "email": "a@example.com"
+    },
+    "reply_to": null,
+    "forwarded_from": null,
+    "reactions": [],
+    "attachments": []
+  }
+}
+```
 
 ---
 
-# Mentions (@name)
+## 2) Media / Attachments
 
-Mentions are done by including `@` + the target user's **display name** inside the message `content`.
+Binary data is uploaded over HTTP; chat messages reference uploaded attachments by `attachment_ids`.
+
+### 2.1 Upload
+
+Client → Server (HTTP)
+
+`POST /api/v1/communication/chat/uploads/` (multipart form)
+
+- `file`: the uploaded file
+- `kind`: one of `image`, `audio`, `video`, `file` (optional, defaults to `file`)
+
+Response (example):
+
+```json
+{
+  "id": 10,
+  "kind": "file",
+  "url": "http://localhost:8000/media/chat_attachments/<...>",
+  "original_name": "hello.txt",
+  "content_type": "text/plain",
+  "size": 11,
+  "created_at": "2026-03-17T12:00:00.000000+00:00"
+}
+```
+
+### 2.2 Send a message with attachments
+
+Client → Server (WebSocket)
+
+```json
+{
+  "type": "message.send",
+  "content": "",
+  "attachment_ids": [10]
+}
+```
+
+The broadcast message includes an `attachments` array:
+
+```json
+{
+  "type": "message.new",
+  "message": {
+    "id": 457,
+    "content": "",
+    "created_at": "2026-03-17T12:00:01.000000+00:00",
+    "sender": { "id": 1, "name": "Alice", "email": "a@example.com" },
+    "reply_to": null,
+    "forwarded_from": null,
+    "reactions": [],
+    "attachments": [
+      {
+        "id": 10,
+        "kind": "file",
+        "url": "/media/chat_attachments/<...>",
+        "original_name": "hello.txt",
+        "content_type": "text/plain",
+        "size": 11,
+        "created_at": "2026-03-17T12:00:00.000000+00:00"
+      }
+    ]
+  }
+}
+```
+
+---
+
+## 3) Mentions (@name)
+
+Mentions are done by including `@` + the target user's display name inside the message `content`.
 
 Client → Server (same `message.send` event)
 
@@ -61,7 +142,7 @@ Client → Server (same `message.send` event)
   "type": "message.send",
   "content": "Hello @Alice"
 }
-````
+```
 
 Mentions also support spaces in the name:
 
@@ -72,24 +153,18 @@ Mentions also support spaces in the name:
 }
 ```
 
-## Matching rules (how the backend detects mentions)
+### Matching rules (how the backend detects mentions)
 
-- Mention token format: `@Name` (spaces allowed _inside_ the name, but not at the beginning/end).
+- Mention token format: `@Name` (spaces allowed inside the name, but not at the beginning/end).
 - Matching is against `User.name` for users who are participants in the room.
   - Channels: members of the channel
   - Groups: members of the group
 - Matching is case-insensitive and ignores whitespace.
   - Example: `@AliceSmith`, `@Alice Smith`, and `@ALICE   SMITH` all match the same user name.
 
-## What the client receives
-
-### Chat room broadcast
-
-The message itself is still broadcast to the chat room as a normal `message.new` event (no special mention payload in `message.new`).
-
 ### Notifications websocket (mention alert)
 
-If a user is mentioned, they receive a notification on the notifications websocket (`/ws/notifications/`) with `notification_type = chat.mention`.
+If a user is mentioned and is not already connected to the same room websocket, they receive a notification on `/ws/notifications/` with `notification_type = chat.mention`.
 
 Server → Client
 
@@ -115,35 +190,11 @@ Server → Client
 }
 ```
 
-### Important note: notification suppression
-
-If the mentioned user is already connected to the same room websocket (e.g. already in `/ws/chat/channels/<id>/`), the backend suppresses notifications (including mention notifications) to avoid duplicates.
-
----
-{
-"type": "message.new",
-"message": {
-"id": 456,
-"content": "Hello",
-"created_at": "2026-03-14T08:40:12.123456+00:00",
-"sender": {
-"id": 1,
-"name": "Alice",
-"email": "a@example.com"
-},
-"reply_to": null,
-"forwarded_from": null,
-"reactions": []
-}
-}
-
-````
-
 ---
 
-# 2. Message Reactions
+## 4) Message Reactions
 
-## Add Reaction
+### Add Reaction
 
 Client → Server
 
@@ -153,9 +204,9 @@ Client → Server
   "message_id": 456,
   "emoji": "👍"
 }
-````
+```
 
-## Remove Reaction
+### Remove Reaction
 
 Client → Server
 
@@ -173,19 +224,13 @@ Client → Server
 {
   "type": "reaction.updated",
   "message_id": 456,
-  "reactions": [
-    {
-      "emoji": "👍",
-      "count": 2,
-      "me": true
-    }
-  ]
+  "reactions": [{ "emoji": "👍", "count": 2, "me": true }]
 }
 ```
 
 ---
 
-# 3. Message History (On Connect)
+## 5) Message History (On Connect)
 
 Immediately after a client connects, the server sends recent messages.
 
@@ -198,58 +243,4 @@ Server → Client
     /* message objects */
   ]
 }
-```
-
----
-
-# 4. People Search Socket
-
-## Search Users
-
-Client → Server
-
-```json
-{
-  "type": "people.search",
-  "query": "john"
-}
-```
-
-## Search Results
-
-Server → Client
-
-```json
-{
-  "type": "people.results",
-  "results": [
-    {
-      "id": 7,
-      "name": "John",
-      "email": "john@example.com",
-      "phone_number": "..."
-    }
-  ]
-}
-```
-
----
-
-# Notes
-
-- All real-time features use WebSocket communication.
-- Messages are broadcast to all members of the room/channel.
-- Reaction updates always return the full aggregated reaction list for the message.
-- Message history is automatically sent when the connection is established.
-
-```
-
-If you want, I can also help you turn this into **a professional API spec style (like Slack / Discord docs)** with:
-
-- message schemas
-- event tables
-- state diagrams
-- Django Channels implementation structure
-
-which would be **much better for maintaining your Slack-like project backend**.
 ```

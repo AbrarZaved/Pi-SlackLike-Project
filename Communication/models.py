@@ -2,6 +2,7 @@ from django.db import models
 from django.utils.text import slugify
 from django.conf import settings
 from django.db.models import Q
+from uuid import uuid4
 
 # Create your models here.
 
@@ -242,3 +243,54 @@ class ChatReaction(models.Model):
 
     def __str__(self):
         return f"{self.emoji} on {self.message_id} by {self.user_id}"
+
+
+def _chat_attachment_upload_to(instance: 'ChatAttachment', filename: str) -> str:
+    # Keep original filename for UX, but prefix with a uuid to avoid collisions.
+    safe_name = (filename or 'file').replace('\x00', '')
+    return f"chat_attachments/{uuid4().hex}_{safe_name}"
+
+
+class ChatAttachment(models.Model):
+    """Uploaded file that can be attached to a ChatMessage.
+
+    Flow:
+    1) Client uploads a file via HTTP -> creates ChatAttachment(message=NULL).
+    2) Client sends websocket message with attachment_ids -> server links them.
+    """
+
+    KIND_IMAGE = 'image'
+    KIND_AUDIO = 'audio'
+    KIND_VIDEO = 'video'
+    KIND_FILE = 'file'
+    KIND_CHOICES = (
+        (KIND_IMAGE, 'Image'),
+        (KIND_AUDIO, 'Audio'),
+        (KIND_VIDEO, 'Video'),
+        (KIND_FILE, 'File'),
+    )
+
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='chat_attachments',
+    )
+    message = models.ForeignKey(
+        ChatMessage,
+        on_delete=models.CASCADE,
+        related_name='attachments',
+        null=True,
+        blank=True,
+    )
+    file = models.FileField(upload_to=_chat_attachment_upload_to)
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES, default=KIND_FILE)
+    original_name = models.CharField(max_length=255, blank=True)
+    content_type = models.CharField(max_length=128, blank=True)
+    size = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self) -> str:
+        return f"Attachment {self.pk} by {self.uploaded_by_id}"

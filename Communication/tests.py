@@ -6,6 +6,7 @@ from authentication.models import User
 from django.utils import timezone
 from datetime import timedelta
 from django.test import TransactionTestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
 
 from asgiref.sync import async_to_sync
 from channels.testing import WebsocketCommunicator
@@ -17,7 +18,7 @@ from Admin.models import Automation
 from Notification.models import Notification
 from Notification.models import SystemSettings
 
-from .models import Workspace, Channel, ChatMessage
+from .models import Workspace, Channel, ChatMessage, ChatAttachment
 
 
 def _ensure_admin_role():
@@ -585,6 +586,57 @@ class MentionNotificationWebsocketTests(TransactionTestCase):
 
 		await channel_ws.disconnect()
 		await alice_notify.disconnect()
+
+
+class ChatAttachmentWebsocketTests(TransactionTestCase):
+	reset_sequences = True
+
+	def test_can_send_attachment_message_over_ws(self):
+		sender = User.objects.create_user(email='att-sender@example.com', password='password123', name='Sender')
+		workspace = Workspace.objects.create(name='WS')
+		channel = Channel.objects.create(name='General', type='public', is_active=True)
+		workspace.channels.add(channel)
+		channel.users.add(sender)
+
+		token = str(AccessToken.for_user(sender))
+		async_to_sync(self._assert_attachment_flow)(
+			token=token,
+			sender_id=sender.id,
+			channel_id=channel.id,
+		)
+
+	def _upload_file(self, *, sender_id: int) -> dict:
+		sender = User.objects.get(id=sender_id)
+		client = APIClient()
+		client.force_authenticate(user=sender)
+		url = reverse('chat-upload')
+		f = SimpleUploadedFile('hello.txt', b'hello world', content_type='text/plain')
+		resp = client.post(url, {'file': f, 'kind': 'file'}, format='multipart')
+		return {'status_code': int(resp.status_code), 'data': resp.data}
+
+	async def _assert_attachment_flow(self, *, token: str, sender_id: int, channel_id: int):
+		upload_res = await database_sync_to_async(self._upload_file)(sender_id=sender_id)
+		self.assertEqual(upload_res['status_code'], status.HTTP_201_CREATED)
+		attachment_id = int(upload_res['data']['id'])
+
+		ws = WebsocketCommunicator(application, f"/ws/chat/channels/{channel_id}/?token={token}")
+		connected, _ = await ws.connect()
+		self.assertTrue(connected)
+		history = await ws.receive_json_from()
+		self.assertEqual(history.get('type'), 'history')
+
+		await ws.send_json_to({'type': 'message.send', 'content': '', 'attachment_ids': [attachment_id]})
+		event = await ws.receive_json_from()
+		self.assertEqual(event.get('type'), 'message.new')
+		self.assertIn('attachments', event['message'])
+		self.assertEqual(len(event['message']['attachments']), 1)
+		self.assertEqual(int(event['message']['attachments'][0]['id']), attachment_id)
+		self.assertTrue(bool(event['message']['attachments'][0].get('url')))
+
+		linked = await database_sync_to_async(ChatAttachment.objects.filter(id=attachment_id, message__isnull=False).count)()
+		self.assertEqual(int(linked), 1)
+
+		await ws.disconnect()
 
 
 class DirectMessageNotificationWebsocketTests(TransactionTestCase):

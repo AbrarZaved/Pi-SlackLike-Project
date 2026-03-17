@@ -58,6 +58,9 @@ chat_channel_messages = views.ChatViewSet.as_view({'get': 'channel_messages'})
 chat_group_messages = views.ChatViewSet.as_view({'get': 'group_messages'})
 chat_dm_messages = views.ChatViewSet.as_view({'get': 'dm_messages'})
 
+# Chat uploads (REST)
+chat_upload = views.ChatUploadView.as_view()
+
 urlpatterns = [
     # Channels
     path('channels/', channel_list, name='channel-list'),
@@ -93,4 +96,7 @@ urlpatterns = [
     path('chat/channels/<int:channel_id>/messages/', chat_channel_messages, name='chat-channel-messages'),
     path('chat/groups/<int:group_id>/messages/', chat_group_messages, name='chat-group-messages'),
     path('chat/dm/<int:other_user_id>/messages/', chat_dm_messages, name='chat-dm-messages'),
+
+    # Chat uploads (REST)
+    path('chat/uploads/', chat_upload, name='chat-upload'),
 ]
