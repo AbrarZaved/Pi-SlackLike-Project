@@ -91,6 +91,12 @@ class Command(BaseCommand):
                 'category': 'communication',
                 'description': 'Make and receive voice and video calls'
             },
+            {
+                'codename': 'screen_share',
+                'name': 'Screen Sharing',
+                'category': 'communication',
+                'description': 'Share your screen during voice/video calls'
+            },
             
             # Channels
             {
@@ -218,6 +224,7 @@ class Command(BaseCommand):
             'business_user': [
                 'send_receive_messages',
                 'calling',
+                'screen_share',
                 'join_channels',
                 'upload_files',
                 'share_files',
@@ -227,6 +234,7 @@ class Command(BaseCommand):
             'team_member': [
                 'send_receive_messages',
                 'calling',
+                'screen_share',
                 'create_channels',
                 'join_channels',
                 'upload_files',
@@ -239,6 +247,7 @@ class Command(BaseCommand):
                 'manage_contacts',
                 'send_receive_messages',
                 'calling',
+                'screen_share',
                 'create_channels',
                 'join_channels',
                 'upload_files',

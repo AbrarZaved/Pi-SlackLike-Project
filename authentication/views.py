@@ -1,4 +1,5 @@
 from django.shortcuts import render
+from django.urls import reverse
 from django.db.models import Count, Q
 from django.utils import timezone
 from django.utils.timesince import timesince
@@ -560,6 +561,10 @@ class AdminLoginView(APIView):
             refresh = RefreshToken.for_user(user)
             access_token = str(refresh.access_token)
             refresh_token = str(refresh)
+
+            profile_shareable_link = request.build_absolute_uri(
+                reverse('admin-profile')
+            )
             
             return Response({
                 'success': True,
@@ -572,6 +577,7 @@ class AdminLoginView(APIView):
                     'role': user.role_name,
                     'phone_number': user.phone_number,
                     'status': user.status,
+                    'profile_shareable_link': profile_shareable_link,
                 }
             }, status=status.HTTP_200_OK)
             

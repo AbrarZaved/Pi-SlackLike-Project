@@ -27,6 +27,7 @@ urlpatterns = [
     path('api/v1/admin/system-settings/', include('Notification.admin_urls')),
     path('api/v1/communication/', include('Communication.urls')),
     path('api/v1/notifications/', include('Notification.urls')),
+    path('api/v1/calls/', include('Calls.urls')),
     
     # DRF Browsable API Authentication
     path('api-auth/', include('rest_framework.urls')),

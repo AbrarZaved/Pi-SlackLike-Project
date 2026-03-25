@@ -96,6 +96,7 @@ INSTALLED_APPS = [
     'Admin',
     'Communication',
     'Notification.apps.NotificationConfig',
+    'Calls',
 ]
 
 MIDDLEWARE = [
@@ -263,6 +264,15 @@ SIMPLE_JWT = {
     'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
     'TOKEN_TYPE_CLAIM': 'token_type',
 }
+
+# ====================
+# LiveKit Configuration
+# ====================
+
+LIVEKIT_URL = env('LIVEKIT_URL', default='')
+LIVEKIT_API_KEY = env('LIVEKIT_API_KEY', default='')
+LIVEKIT_API_SECRET = env('LIVEKIT_API_SECRET', default='')
+
 
 # ====================
 # OpenAPI 3.0 Configuration (drf-spectacular)
