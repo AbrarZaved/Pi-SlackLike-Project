@@ -240,6 +240,115 @@ class DashboardViewSet(viewsets.ViewSet):
         serializer = DashboardOverviewSerializer(data)
         return Response(serializer.data)
 
+    def _calculate_growth(self, current, previous):
+        """Calculate percentage growth."""
+        if previous == 0:
+            return 100.0 if current > 0 else 0.0
+        return round(((current - previous) / previous) * 100, 1)
+
+    def _get_business_growth(self):
+        """Get business registration data for last 6 months."""
+        months_data = []
+        now = timezone.now()
+
+        for i in range(5, -1, -1):
+            # Calculate the start and end of the month
+            current_date = now.replace(day=1) - timedelta(days=i * 30)
+            month_start = current_date.replace(day=1)
+
+            if i == 0:
+                month_end = now
+            else:
+                month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+
+            count = Workspace.objects.filter(
+                created_at__gte=month_start,
+                created_at__lte=month_end,
+            ).count()
+
+            months_data.append({
+                'month': month_start.strftime('%b'),
+                'count': count,
+            })
+
+        return months_data
+
+    def _get_user_activity(self):
+        """Get active users per day for last 7 days."""
+        activity_data = []
+        days_mapping = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+        for i in range(6, -1, -1):
+            date = timezone.now().date() - timedelta(days=i)
+            day_name = days_mapping[date.weekday()]
+
+            # Count users with activity (created_at) on this date
+            count = User.objects.filter(
+                created_at__date=date,
+                is_active=True,
+            ).count()
+
+            activity_data.append({
+                'day': day_name,
+                'date': date,
+                'count': count,
+            })
+
+        return activity_data
+
+    def _get_recent_activity(self):
+        """Get recent activity across platform."""
+        recent_items = []
+
+        # Recent workspaces (businesses)
+        recent_workspaces = Workspace.objects.all().order_by('-created_at')[:3]
+        for workspace in recent_workspaces:
+            time_diff = self._get_time_difference(workspace.created_at)
+            recent_items.append({
+                'id': workspace.id,
+                'business_name': workspace.name,
+                'timestamp': workspace.created_at,
+                'action': 'New business registered',
+                'description': f'{workspace.name} was registered {time_diff}',
+            })
+
+        # Recent user additions to workspaces
+        recent_users = User.objects.filter(is_active=True).order_by('-created_at')[:2]
+        for user in recent_users:
+            time_diff = self._get_time_difference(user.created_at)
+            workspace = Workspace.objects.filter(users=user).first()
+            if workspace:
+                recent_items.append({
+                    'id': user.id,
+                    'business_name': workspace.name,
+                    'timestamp': user.created_at,
+                    'action': 'User joined',
+                    'description': f'{user.name or user.email} joined the platform {time_diff}',
+                })
+
+        # Sort by timestamp, most recent first
+        recent_items.sort(key=lambda x: x['timestamp'], reverse=True)
+
+        return recent_items[:5]
+
+    def _get_time_difference(self, dt):
+        """Get human-readable time difference."""
+        diff = timezone.now() - dt
+
+        if diff.total_seconds() < 60:
+            return 'just now'
+        elif diff.total_seconds() < 3600:
+            minutes = int(diff.total_seconds() / 60)
+            return f'{minutes} minute{"s" if minutes > 1 else ""} ago'
+        elif diff.total_seconds() < 86400:
+            hours = int(diff.total_seconds() / 3600)
+            return f'{hours} hour{"s" if hours > 1 else ""} ago'
+        elif diff.total_seconds() < 604800:
+            days = int(diff.total_seconds() / 86400)
+            return f'{days} day{"s" if days > 1 else ""} ago'
+        else:
+            return dt.strftime('%d %b')
+
 
 # ====================
 # Admin - Activate/Deactivate
@@ -377,113 +486,4 @@ class AutomationViewSet(
     @extend_schema(description='Update automation (partial)', tags=['Admin - Automations'])
     def partial_update(self, request, *args, **kwargs):
         return super().partial_update(request, *args, **kwargs)
-    
-    def _calculate_growth(self, current, previous):
-        """Calculate percentage growth"""
-        if previous == 0:
-            return 100.0 if current > 0 else 0.0
-        return round(((current - previous) / previous) * 100, 1)
-    
-    def _get_business_growth(self):
-        """Get business registration data for last 6 months"""
-        months_data = []
-        now = timezone.now()
-        
-        for i in range(5, -1, -1):
-            # Calculate the start and end of the month
-            current_date = now.replace(day=1) - timedelta(days=i*30)
-            month_start = current_date.replace(day=1)
-            
-            if i == 0:
-                month_end = now
-            else:
-                month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
-            
-            count = Workspace.objects.filter(
-                created_at__gte=month_start,
-                created_at__lte=month_end
-            ).count()
-            
-            months_data.append({
-                'month': month_start.strftime('%b'),
-                'count': count
-            })
-        
-        return months_data
-    
-    def _get_user_activity(self):
-        """Get active users per day for last 7 days"""
-        activity_data = []
-        days_mapping = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-        
-        for i in range(6, -1, -1):
-            date = timezone.now().date() - timedelta(days=i)
-            day_name = days_mapping[date.weekday()]
-            
-            # Count users with activity (created_at) on this date
-            count = User.objects.filter(
-                created_at__date=date,
-                is_active=True
-            ).count()
-            
-            activity_data.append({
-                'day': day_name,
-                'date': date,
-                'count': count
-            })
-        
-        return activity_data
-    
-    def _get_recent_activity(self):
-        """Get recent activity across platform"""
-        recent_items = []
-        
-        # Recent workspaces (businesses)
-        recent_workspaces = Workspace.objects.all().order_by('-created_at')[:3]
-        for workspace in recent_workspaces:
-            time_diff = self._get_time_difference(workspace.created_at)
-            recent_items.append({
-                'id': workspace.id,
-                'business_name': workspace.name,
-                'timestamp': workspace.created_at,
-                'action': 'New business registered',
-                'description': f'{workspace.name} was registered {time_diff}',
-            })
-        
-        # Recent user additions to workspaces
-        recent_users = User.objects.filter(is_active=True).order_by('-created_at')[:2]
-        for user in recent_users:
-            time_diff = self._get_time_difference(user.created_at)
-            workspace = Workspace.objects.filter(users=user).first()
-            if workspace:
-                recent_items.append({
-                    'id': user.id,
-                    'business_name': workspace.name,
-                    'timestamp': user.created_at,
-                    'action': 'User joined',
-                    'description': f'{user.name or user.email} joined the platform {time_diff}',
-                })
-        
-        # Sort by timestamp, most recent first
-        recent_items.sort(key=lambda x: x['timestamp'], reverse=True)
-        
-        return recent_items[:5]
-    
-    def _get_time_difference(self, dt):
-        """Get human-readable time difference"""
-        diff = timezone.now() - dt
-        
-        if diff.total_seconds() < 60:
-            return 'just now'
-        elif diff.total_seconds() < 3600:
-            minutes = int(diff.total_seconds() / 60)
-            return f'{minutes} minute{"s" if minutes > 1 else ""} ago'
-        elif diff.total_seconds() < 86400:
-            hours = int(diff.total_seconds() / 3600)
-            return f'{hours} hour{"s" if hours > 1 else ""} ago'
-        elif diff.total_seconds() < 604800:
-            days = int(diff.total_seconds() / 86400)
-            return f'{days} day{"s" if days > 1 else ""} ago'
-        else:
-            return dt.strftime('%d %b')
 
