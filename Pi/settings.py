@@ -81,6 +81,7 @@ else:
 INSTALLED_APPS = [
     'daphne',
     'channels',
+    'django_extensions',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
