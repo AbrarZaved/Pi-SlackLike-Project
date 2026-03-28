@@ -4,6 +4,7 @@ Serializers for Authentication APIs
 
 from rest_framework import serializers
 from .models import User, Role, Permission
+from Admin.models import AdminProfile
 
 
 # ====================
@@ -271,45 +272,14 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
 class AdminProfileUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for admins to update their own profile.
-    Admins can update same fields as regular users: name, phone_number, title, profile_picture
+    Admins update their AdminProfile record (Admin app).
     """
     class Meta:
-        model = User
-        fields = ['name', 'phone_number', 'title', 'profile_picture', 'status']
+        model = AdminProfile
+        fields = ['bio', 'department', 'location']
         extra_kwargs = {
-            'name': {'required': False},
-            'phone_number': {'required': False},
-            'title': {'required': False},
-            'profile_picture': {'required': False},
-            'status': {'required': False},
+            'bio': {'required': False, 'allow_null': True, 'allow_blank': True},
+            'department': {'required': False, 'allow_null': True, 'allow_blank': True},
+            'location': {'required': False, 'allow_null': True, 'allow_blank': True},
         }
-    
-    def validate_phone_number(self, value):
-        """
-        Validate that phone number is unique (if provided).
-        """
-        if value:
-            user = self.instance
-            if User.objects.filter(phone_number=value).exclude(id=user.id).exists():
-                raise serializers.ValidationError("This phone number is already in use.")
-        return value
-    
-    def validate_status(self, value):
-        """
-        Validate status field.
-        """
-        valid_statuses = ['active', 'inactive', 'away', 'busy']
-        if value and value not in valid_statuses:
-            raise serializers.ValidationError(
-                f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
-            )
-        return value
-    
-    def update(self, instance, validated_data):
-        """
-        Update admin profile fields.
-        """
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        instance.save()
-        return instance
+

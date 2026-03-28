@@ -31,6 +31,7 @@ from .permissions import (
     get_user_permissions
 )
 from .tasks import send_welcome_email, send_otp_email
+from Admin.models import AdminProfile
 
 
 # ====================
@@ -683,7 +684,7 @@ class AdminProfileUpdateView(APIView):
     @extend_schema(
         description="Update admin's own profile (admin only)",
         request=AdminProfileUpdateSerializer,
-        responses={200: UserSerializer},
+        responses={200: OpenApiTypes.OBJECT},
         tags=['Profile']
     )
     def patch(self, request):
@@ -697,11 +698,8 @@ class AdminProfileUpdateView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        serializer = self.serializer_class(
-            user, 
-            data=request.data, 
-            partial=True
-        )
+        admin_profile, _ = AdminProfile.objects.get_or_create(user=user)
+        serializer = self.serializer_class(admin_profile, data=request.data, partial=True)
         
         if not serializer.is_valid():
             return Response(
@@ -710,13 +708,20 @@ class AdminProfileUpdateView(APIView):
             )
         
         try:
-            updated_user = serializer.save()
-            user_serializer = UserSerializer(updated_user)
+            updated_profile = serializer.save()
+            user_data = UserSerializer(user).data
+            user_data.update(
+                {
+                    'bio': updated_profile.bio,
+                    'department': updated_profile.department,
+                    'location': updated_profile.location,
+                }
+            )
             
             return Response({
                 'success': True,
                 'message': 'Admin profile updated successfully',
-                'user': user_serializer.data
+                'user': user_data,
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -727,7 +732,7 @@ class AdminProfileUpdateView(APIView):
     
     @extend_schema(
         description="Get admin's own profile (admin only)",
-        responses={200: UserSerializer},
+        responses={200: OpenApiTypes.OBJECT},
         tags=['Profile']
     )
     def get(self, request):
@@ -741,6 +746,14 @@ class AdminProfileUpdateView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        serializer = UserSerializer(user)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        admin_profile, _ = AdminProfile.objects.get_or_create(user=user)
+        user_data = UserSerializer(user).data
+        user_data.update(
+            {
+                'bio': admin_profile.bio,
+                'department': admin_profile.department,
+                'location': admin_profile.location,
+            }
+        )
+        return Response({'user': user_data}, status=status.HTTP_200_OK)
 

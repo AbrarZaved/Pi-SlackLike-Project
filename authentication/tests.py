@@ -6,6 +6,7 @@ from rest_framework.test import APITestCase
 
 from .models import User, Role
 from Communication.models import Workspace
+from Admin.models import AdminProfile
 
 
 class UserListSummaryTests(APITestCase):
@@ -60,3 +61,36 @@ class UserListSummaryTests(APITestCase):
 		self.assertEqual(response.data['total_active_users'], 1)
 		self.assertEqual(response.data['total_inactive_users'], 0)
 		self.assertEqual(response.data['count'], 1)
+
+
+class AdminProfileEndpointTests(APITestCase):
+	def setUp(self):
+		self.admin_role = Role.objects.create(name='Admin', slug='admin')
+		self.admin_user = User.objects.create_user(
+			email='admin-profile@example.com',
+			password='password123',
+			role=self.admin_role,
+		)
+		self.client.force_authenticate(user=self.admin_user)
+
+	def test_admin_profile_patch_updates_admin_profile_model(self):
+		url = reverse('admin-profile')
+		payload = {
+			'bio': 'Hello',
+			'department': 'Ops',
+			'location': 'Remote',
+		}
+		resp = self.client.patch(url, payload, format='json')
+		self.assertEqual(resp.status_code, status.HTTP_200_OK)
+		self.assertTrue(AdminProfile.objects.filter(user=self.admin_user).exists())
+		profile = AdminProfile.objects.get(user=self.admin_user)
+		self.assertEqual(profile.bio, 'Hello')
+		self.assertEqual(profile.department, 'Ops')
+		self.assertEqual(profile.location, 'Remote')
+		self.assertIn('user', resp.data)
+		self.assertIn('bio', resp.data['user'])
+		self.assertIn('department', resp.data['user'])
+		self.assertIn('location', resp.data['user'])
+		self.assertEqual(resp.data['user']['bio'], 'Hello')
+		self.assertEqual(resp.data['user']['department'], 'Ops')
+		self.assertEqual(resp.data['user']['location'], 'Remote')
