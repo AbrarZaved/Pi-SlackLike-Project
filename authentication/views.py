@@ -90,6 +90,7 @@ class UserViewSet(viewsets.ModelViewSet):
                 'name': user.name,
                 'role': user.role_name,
                 'status': user.status,
+                'is_active': user.is_active,
                 'phone_number': user.phone_number,
                 'created_workspaces': list(user.created_workspaces.values_list('name', flat=True)),
                 'last_active': (
@@ -412,6 +413,7 @@ class VerifyOTPView(APIView):
                         'role': user.role_name,
                         'phone_number': user.phone_number,
                         'status': user.status,
+                        'is_active': user.is_active,
                     }
                 }, status=status.HTTP_200_OK)
             else:
@@ -579,6 +581,7 @@ class AdminLoginView(APIView):
                     'role': user.role_name,
                     'phone_number': user.phone_number,
                     'status': user.status,
+                    'is_active': user.is_active,
                     'profile_shareable_link': profile_shareable_link,
                 }
             }, status=status.HTTP_200_OK)

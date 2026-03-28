@@ -48,6 +48,7 @@ class UserListSummaryTests(APITestCase):
 		self.assertIn('Admin WS', admin_row['created_workspaces'])
 		self.assertIn('last_active', admin_row)
 		self.assertIsNotNone(admin_row['last_active'])
+		self.assertIn('is_active', admin_row)
 
 	def test_user_list_counts_respect_search_filter(self):
 		User.objects.create_user(email='alpha@example.com', password='password123', is_active=True, name='Alpha')

@@ -94,7 +94,7 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'id', 'name', 'email', 'phone_number', 'title', 
-            'profile_picture', 'status', 'role', 'role_name',
+            'profile_picture', 'status', 'role', 'role_name', 'is_active',
             'is_verified', 'created_at', 'updated_at', 'permissions'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'is_verified']
@@ -252,12 +252,11 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
         """
         Validate status field.
         """
-        valid_statuses = ['active', 'inactive', 'away', 'busy']
-        if value and value not in valid_statuses:
-            raise serializers.ValidationError(
-                f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
-            )
-        return value
+        # User.status is a boolean field. DRF will coerce common inputs ("true"/"false", 1/0)
+        # into a Python bool before calling this validator.
+        if value in (True, False) or value is None:
+            return value
+        raise serializers.ValidationError('Invalid status. Must be a boolean.')
     
     def update(self, instance, validated_data):
         """
