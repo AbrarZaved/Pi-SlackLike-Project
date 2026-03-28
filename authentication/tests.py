@@ -94,3 +94,12 @@ class AdminProfileEndpointTests(APITestCase):
 		self.assertEqual(resp.data['user']['bio'], 'Hello')
 		self.assertEqual(resp.data['user']['department'], 'Ops')
 		self.assertEqual(resp.data['user']['location'], 'Remote')
+
+	def test_admin_profile_patch_can_update_user_fields(self):
+		url = reverse('admin-profile')
+		resp = self.client.patch(url, {'name': 'Abrar Javed'}, format='json')
+		self.assertEqual(resp.status_code, status.HTTP_200_OK)
+		self.admin_user.refresh_from_db()
+		self.assertEqual(self.admin_user.name, 'Abrar Javed')
+		self.assertIn('user', resp.data)
+		self.assertEqual(resp.data['user']['name'], 'Abrar Javed')

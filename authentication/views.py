@@ -3,6 +3,7 @@ from django.urls import reverse
 from django.db.models import Count, Q
 from django.utils import timezone
 from django.utils.timesince import timesince
+from django.db import transaction
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -699,17 +700,28 @@ class AdminProfileUpdateView(APIView):
             )
         
         admin_profile, _ = AdminProfile.objects.get_or_create(user=user)
-        serializer = self.serializer_class(admin_profile, data=request.data, partial=True)
-        
-        if not serializer.is_valid():
+        user_serializer = UserProfileUpdateSerializer(user, data=request.data, partial=True)
+        profile_serializer = self.serializer_class(admin_profile, data=request.data, partial=True)
+
+        user_valid = user_serializer.is_valid()
+        profile_valid = profile_serializer.is_valid()
+        if not user_valid or not profile_valid:
             return Response(
-                {'error': serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST
+                {
+                    'error': {
+                        'user': user_serializer.errors,
+                        'admin_profile': profile_serializer.errors,
+                    }
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        
+
         try:
-            updated_profile = serializer.save()
-            user_data = UserSerializer(user).data
+            with transaction.atomic():
+                updated_user = user_serializer.save()
+                updated_profile = profile_serializer.save()
+
+            user_data = UserSerializer(updated_user).data
             user_data.update(
                 {
                     'bio': updated_profile.bio,
