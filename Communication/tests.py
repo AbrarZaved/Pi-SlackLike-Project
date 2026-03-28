@@ -109,6 +109,49 @@ class WorkspaceListNonAdminResponseTests(APITestCase):
 		self.assertEqual(names, {created.name, joined.name})
 
 
+class IsActivePatchPermissionsTests(APITestCase):
+	def setUp(self):
+		admin_role = _ensure_admin_role()
+		self.admin = User.objects.create_user(email='isactive-admin@example.com', password='password123', role=admin_role)
+		self.owner = User.objects.create_user(email='isactive-owner@example.com', password='password123')
+		self.other = User.objects.create_user(email='isactive-other@example.com', password='password123')
+
+		self.workspace = Workspace.objects.create(name='WS Active', is_active=True, user=self.owner)
+		self.channel = Channel.objects.create(name='CH Active', type='public', is_active=True, user=self.owner)
+
+	def test_admin_can_patch_workspace_is_active(self):
+		self.client.force_authenticate(user=self.admin)
+		url = reverse('workspace-detail', kwargs={'pk': self.workspace.id})
+		resp = self.client.patch(url, {'is_active': False}, format='json')
+		self.assertEqual(resp.status_code, status.HTTP_200_OK)
+		self.workspace.refresh_from_db()
+		self.assertFalse(self.workspace.is_active)
+
+	def test_non_owner_non_admin_cannot_patch_workspace(self):
+		self.client.force_authenticate(user=self.other)
+		url = reverse('workspace-detail', kwargs={'pk': self.workspace.id})
+		resp = self.client.patch(url, {'is_active': False}, format='json')
+		self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+		self.workspace.refresh_from_db()
+		self.assertTrue(self.workspace.is_active)
+
+	def test_admin_can_patch_channel_is_active(self):
+		self.client.force_authenticate(user=self.admin)
+		url = reverse('channel-detail', kwargs={'pk': self.channel.id})
+		resp = self.client.patch(url, {'is_active': False}, format='json')
+		self.assertEqual(resp.status_code, status.HTTP_200_OK)
+		self.channel.refresh_from_db()
+		self.assertFalse(self.channel.is_active)
+
+	def test_non_owner_non_admin_cannot_patch_channel(self):
+		self.client.force_authenticate(user=self.other)
+		url = reverse('channel-detail', kwargs={'pk': self.channel.id})
+		resp = self.client.patch(url, {'is_active': False}, format='json')
+		self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+		self.channel.refresh_from_db()
+		self.assertTrue(self.channel.is_active)
+
+
 class ChannelListSummaryTests(APITestCase):
 	def setUp(self):
 		admin_role = _ensure_admin_role()

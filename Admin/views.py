@@ -19,7 +19,7 @@ from .serializers import (
     ActivationStatusSerializer,
     AutomationSerializer,
 )
-from Communication.models import Workspace, Channel
+from Communication.models import Workspace, Channel, Group
 from authentication.models import User
 from authentication.permissions import IsAdmin
 from .models import Automation, AutomationExecution
@@ -375,7 +375,7 @@ class AdminUserActivationViewSet(_AdminActivationMixin, viewsets.GenericViewSet)
         request=ActivationStatusSerializer,
         tags=['Admin - Activation'],
     )
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post', 'patch'])
     def status(self, request, pk=None):
         serializer = ActivationStatusSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -391,7 +391,7 @@ class AdminWorkspaceActivationViewSet(_AdminActivationMixin, viewsets.GenericVie
         request=ActivationStatusSerializer,
         tags=['Admin - Activation'],
     )
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post', 'patch'])
     def status(self, request, pk=None):
         serializer = ActivationStatusSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -407,7 +407,23 @@ class AdminChannelActivationViewSet(_AdminActivationMixin, viewsets.GenericViewS
         request=ActivationStatusSerializer,
         tags=['Admin - Activation'],
     )
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post', 'patch'])
+    def status(self, request, pk=None):
+        serializer = ActivationStatusSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return self._set_active(self.get_object(), serializer.validated_data['is_active'])
+
+
+class AdminGroupActivationViewSet(_AdminActivationMixin, viewsets.GenericViewSet):
+    queryset = Group.objects.all()
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    @extend_schema(
+        description='Set a group active/inactive',
+        request=ActivationStatusSerializer,
+        tags=['Admin - Activation'],
+    )
+    @action(detail=True, methods=['post', 'patch'])
     def status(self, request, pk=None):
         serializer = ActivationStatusSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

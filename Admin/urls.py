@@ -29,9 +29,10 @@ dashboard_overview = views.DashboardViewSet.as_view({
 })
 
 # Activation endpoints
-admin_user_status = views.AdminUserActivationViewSet.as_view({'post': 'status'})
-admin_workspace_status = views.AdminWorkspaceActivationViewSet.as_view({'post': 'status'})
-admin_channel_status = views.AdminChannelActivationViewSet.as_view({'post': 'status'})
+admin_user_status = views.AdminUserActivationViewSet.as_view({'post': 'status', 'patch': 'status'})
+admin_workspace_status = views.AdminWorkspaceActivationViewSet.as_view({'post': 'status', 'patch': 'status'})
+admin_channel_status = views.AdminChannelActivationViewSet.as_view({'post': 'status', 'patch': 'status'})
+admin_group_status = views.AdminGroupActivationViewSet.as_view({'post': 'status', 'patch': 'status'})
 
 # Automations endpoints
 automation_list = views.AutomationViewSet.as_view({'get': 'list', 'post': 'create'})
@@ -55,6 +56,7 @@ urlpatterns = [
     path('users/<int:pk>/status/', admin_user_status, name='admin-user-status'),
     path('workspaces/<int:pk>/status/', admin_workspace_status, name='admin-workspace-status'),
     path('channels/<int:pk>/status/', admin_channel_status, name='admin-channel-status'),
+    path('groups/<int:pk>/status/', admin_group_status, name='admin-group-status'),
 
     # Automations
     path('automations/', automation_list, name='admin-automation-list'),

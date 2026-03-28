@@ -3,7 +3,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from authentication.models import User, Role
-from Communication.models import Workspace, Channel, ChatMessage
+from Communication.models import Workspace, Channel, Group, ChatMessage
 
 from Admin.models import Automation
 from Notification.models import SystemSettings, NotificationPreference
@@ -26,6 +26,7 @@ class AdminActivationEndpointsTests(APITestCase):
 
 		self.channel = Channel.objects.create(name='Chan', type='public', is_active=True)
 		self.workspace = Workspace.objects.create(name='WS', is_active=True)
+		self.group = Group.objects.create(name='G', is_active=True)
 
 	def test_non_admin_cannot_deactivate_channel(self):
 		self.client.force_authenticate(user=self.normal_user)
@@ -37,13 +38,13 @@ class AdminActivationEndpointsTests(APITestCase):
 		self.client.force_authenticate(user=self.admin_user)
 
 		url = reverse('admin-channel-status', kwargs={'pk': self.channel.id})
-		response = self.client.post(url, {'is_active': False}, format='json')
+		response = self.client.patch(url, {'is_active': False}, format='json')
 		self.assertEqual(response.status_code, status.HTTP_200_OK)
 		self.channel.refresh_from_db()
 		self.assertFalse(self.channel.is_active)
 
 		url = reverse('admin-channel-status', kwargs={'pk': self.channel.id})
-		response = self.client.post(url, {'is_active': True}, format='json')
+		response = self.client.patch(url, {'is_active': True}, format='json')
 		self.assertEqual(response.status_code, status.HTTP_200_OK)
 		self.channel.refresh_from_db()
 		self.assertTrue(self.channel.is_active)
@@ -51,7 +52,7 @@ class AdminActivationEndpointsTests(APITestCase):
 	def test_admin_can_deactivate_workspace(self):
 		self.client.force_authenticate(user=self.admin_user)
 		url = reverse('admin-workspace-status', kwargs={'pk': self.workspace.id})
-		response = self.client.post(url, {'is_active': False}, format='json')
+		response = self.client.patch(url, {'is_active': False}, format='json')
 		self.assertEqual(response.status_code, status.HTTP_200_OK)
 		self.workspace.refresh_from_db()
 		self.assertFalse(self.workspace.is_active)
@@ -59,10 +60,18 @@ class AdminActivationEndpointsTests(APITestCase):
 	def test_admin_can_deactivate_user(self):
 		self.client.force_authenticate(user=self.admin_user)
 		url = reverse('admin-user-status', kwargs={'pk': self.normal_user.id})
-		response = self.client.post(url, {'is_active': False}, format='json')
+		response = self.client.patch(url, {'is_active': False}, format='json')
 		self.assertEqual(response.status_code, status.HTTP_200_OK)
 		self.normal_user.refresh_from_db()
 		self.assertFalse(self.normal_user.is_active)
+
+	def test_admin_can_deactivate_group(self):
+		self.client.force_authenticate(user=self.admin_user)
+		url = reverse('admin-group-status', kwargs={'pk': self.group.id})
+		response = self.client.patch(url, {'is_active': False}, format='json')
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		self.group.refresh_from_db()
+		self.assertFalse(self.group.is_active)
 
 
 class AdminAutomationsTests(APITestCase):

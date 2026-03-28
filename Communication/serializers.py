@@ -49,12 +49,14 @@ class ChannelSerializer(serializers.ModelSerializer):
             'name',
             'type',
             'slug',
+            'is_active',
             'shareable_url',
             'workspaces_info',
             'created_by',
             'users',
             'user_ids',
             'users_count',
+            'is_active',
             'created_at',
             'updated_at'
         ]
@@ -112,7 +114,7 @@ class ChannelListSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Channel
-        fields = ['id', 'name', 'type', 'created_by', 'users_count', 'messages_count', 'workspaces', 'created_at']
+        fields = ['id', 'name', 'type', 'created_by', 'is_active', 'users_count', 'messages_count', 'workspaces', 'created_at']
         read_only_fields = ['id', 'created_by', 'created_at']
     
     def get_users_count(self, obj):
@@ -201,6 +203,7 @@ class WorkspaceSerializer(serializers.ModelSerializer):
             'name',
             'picture',
             'slug',
+            'is_active',
             'shareable_url',
             'created_by',
             'channels',
@@ -239,7 +242,7 @@ class WorkspaceListSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Workspace
-        fields = ['id', 'name', 'picture', 'created_by', 'channels_count', 'users_count', 'created_at']
+        fields = ['id', 'name', 'picture', 'created_by', 'channels_count', 'users_count', 'is_active', 'created_at']
         read_only_fields = ['id', 'picture', 'created_by', 'created_at']
     
     def get_channels_count(self, obj):

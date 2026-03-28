@@ -193,6 +193,14 @@ class ChannelViewSet(viewsets.ModelViewSet):
     def update(self, request, pk=None):
         """Update a channel"""
         channel = self.get_object()
+
+        # Only channel creator or global admin can update
+        if request.user != channel.user and not _is_admin_user(request.user):
+            return Response(
+                {'error': 'Only channel owner or admin can update this channel'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         serializer = self.get_serializer(channel, data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save()
@@ -207,6 +215,14 @@ class ChannelViewSet(viewsets.ModelViewSet):
     def partial_update(self, request, pk=None):
         """Partially update a channel"""
         channel = self.get_object()
+
+        # Only channel creator or global admin can update
+        if request.user != channel.user and not _is_admin_user(request.user):
+            return Response(
+                {'error': 'Only channel owner or admin can update this channel'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         serializer = self.get_serializer(channel, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
@@ -221,6 +237,14 @@ class ChannelViewSet(viewsets.ModelViewSet):
     def destroy(self, request, pk=None):
         """Delete a channel"""
         channel = self.get_object()
+
+        # Only channel creator or global admin can delete
+        if request.user != channel.user and not _is_admin_user(request.user):
+            return Response(
+                {'error': 'Only channel owner or admin can delete this channel'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         channel.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
     
@@ -445,6 +469,14 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
     def update(self, request, pk=None):
         """Update a workspace"""
         workspace = self.get_object()
+
+        # Only workspace creator or global admin can update
+        if request.user != workspace.user and not _is_admin_user(request.user):
+            return Response(
+                {'error': 'Only workspace owner or admin can update this workspace'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         serializer = self.get_serializer(workspace, data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save()
@@ -459,6 +491,14 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
     def partial_update(self, request, pk=None):
         """Partially update a workspace"""
         workspace = self.get_object()
+
+        # Only workspace creator or global admin can update
+        if request.user != workspace.user and not _is_admin_user(request.user):
+            return Response(
+                {'error': 'Only workspace owner or admin can update this workspace'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         serializer = self.get_serializer(workspace, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
@@ -472,6 +512,14 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
     def destroy(self, request, pk=None):
         """Delete a workspace"""
         workspace = self.get_object()
+
+        # Only workspace creator or global admin can delete
+        if request.user != workspace.user and not _is_admin_user(request.user):
+            return Response(
+                {'error': 'Only workspace owner or admin can delete this workspace'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         workspace.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
     
@@ -833,9 +881,9 @@ class GroupViewSet(viewsets.ModelViewSet):
         group = self.get_object()
         
         # Check if user is admin or group owner
-        if request.user != group.group_admin and request.user != group.user:
+        if request.user != group.group_admin and request.user != group.user and not _is_admin_user(request.user):
             return Response(
-                {'error': 'Only group admin or owner can update this group'},
+                {'error': 'Only group admin, owner, or admin can update this group'},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -855,9 +903,9 @@ class GroupViewSet(viewsets.ModelViewSet):
         group = self.get_object()
         
         # Check if user is admin or group owner
-        if request.user != group.group_admin and request.user != group.user:
+        if request.user != group.group_admin and request.user != group.user and not _is_admin_user(request.user):
             return Response(
-                {'error': 'Only group admin or owner can update this group'},
+                {'error': 'Only group admin, owner, or admin can update this group'},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -876,9 +924,9 @@ class GroupViewSet(viewsets.ModelViewSet):
         group = self.get_object()
         
         # Check if user is admin or group owner
-        if request.user != group.group_admin and request.user != group.user:
+        if request.user != group.group_admin and request.user != group.user and not _is_admin_user(request.user):
             return Response(
-                {'error': 'Only group admin or owner can delete this group'},
+                {'error': 'Only group admin, owner, or admin can delete this group'},
                 status=status.HTTP_403_FORBIDDEN
             )
         
