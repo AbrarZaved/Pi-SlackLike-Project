@@ -10,3 +10,5 @@ __pycache__/
 *.pot
 .env
 *.env
+.env.*
+media/*

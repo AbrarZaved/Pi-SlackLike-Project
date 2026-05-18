@@ -233,7 +233,7 @@ class User(AbstractBaseUser):
         blank=True,
         help_text="Phone number (optional)"
     )
-    status = models.CharField(max_length=20, default='active')
+    status = models.BooleanField(default=True, help_text="Whether the user is active or inactive")
     slug = models.SlugField(null=True, blank=True)
     
     # OTP Fields

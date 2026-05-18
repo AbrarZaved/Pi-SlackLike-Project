@@ -1,4 +1,9 @@
 from django.shortcuts import render
+from django.urls import reverse
+from django.db.models import Count, Q
+from django.utils import timezone
+from django.utils.timesince import timesince
+from django.db import transaction
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -7,14 +12,18 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiExample
 from drf_spectacular.types import OpenApiTypes
-
+from firebase_admin import auth
+from .firebase import get_firebase_app
 from .models import User, Role, Permission
 from .serializers import (
+    AdminLoginSerializer,
     SendOTPSerializer,
     VerifyOTPSerializer,
     LoginResponseSerializer,
     UserSerializer,
-    RoleSerializer
+    RoleSerializer,
+    UserProfileUpdateSerializer,
+    AdminProfileUpdateSerializer
 )
 from .permissions import (
     HasPermission, 
@@ -23,6 +32,7 @@ from .permissions import (
     get_user_permissions
 )
 from .tasks import send_welcome_email, send_otp_email
+from Admin.models import AdminProfile
 
 
 # ====================
@@ -41,22 +51,61 @@ class UserViewSet(viewsets.ModelViewSet):
     
     @extend_schema(
         description="Get all users in the system",
+        parameters=[
+            OpenApiParameter(
+                name='search',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description='Search users by email, name, or phone number',
+                required=False
+            )
+        ],
         tags=['Users']
     )
     def list(self, request):
         """List all users."""
-        users = self.get_queryset()
+        users = self.get_queryset().prefetch_related('created_workspaces')
+        
+        # Search filter
+        search_query = request.query_params.get('search', None)
+        if search_query:
+            users = users.filter(
+                Q(email__icontains=search_query) |
+                Q(name__icontains=search_query) |
+                Q(phone_number__icontains=search_query)
+            )
+
+        counts = users.aggregate(
+            total_users=Count('id'),
+            total_active_users=Count('id', filter=Q(is_active=True)),
+        )
+        total_users = counts.get('total_users', 0) or 0
+        total_active_users = counts.get('total_active_users', 0) or 0
+        total_inactive_users = max(total_users - total_active_users, 0)
+        
         data = [
             {
                 'id': user.id,
                 'email': user.email,
+                'name': user.name,
                 'role': user.role_name,
                 'status': user.status,
+                'is_active': user.is_active,
                 'phone_number': user.phone_number,
+                'created_workspaces': list(user.created_workspaces.values_list('name', flat=True)),
+                'last_active': (
+                    f"{timesince(user.last_login, timezone.now())} ago" if user.last_login else None
+                ),
             }
             for user in users
         ]
-        return Response({'count': len(data), 'results': data})
+        return Response({
+            'total_users': total_users,
+            'total_active_users': total_active_users,
+            'total_inactive_users': total_inactive_users,
+            'count': len(data),
+            'results': data,
+        })
     
     @extend_schema(
         description="Create a new user",
@@ -274,6 +323,7 @@ class SendOTPView(APIView):
                 'message': 'OTP sent to your email',
                 'email': email,
                 'is_new_user': created,
+                'otp':otp,  # Include OTP in response for testing purposes (remove in production)
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -364,6 +414,7 @@ class VerifyOTPView(APIView):
                         'role': user.role_name,
                         'phone_number': user.phone_number,
                         'status': user.status,
+                        'is_active': user.is_active,
                     }
                 }, status=status.HTTP_200_OK)
             else:
@@ -383,6 +434,169 @@ class VerifyOTPView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+# Social Auth
+
+class FirebaseAuthView(APIView):
+    """
+    Authenticate user using Firebase ID token.
+    """
+    permission_classes = [AllowAny]
+    
+    @extend_schema(
+        description="Authenticate user using Firebase ID token and send OTP",
+        request=OpenApiTypes.OBJECT,
+        tags=['Authentication']
+    )
+    def post(self, request):
+        """Authenticate user using Firebase ID token and send OTP."""
+        id_token = request.data.get('id_token')
+        
+        if not id_token:
+            return Response(
+                {'error': 'ID token is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            firebase_app = get_firebase_app()
+            decoded_token = auth.verify_id_token(id_token, app=firebase_app)
+            email = decoded_token.get('email')
+            
+            if not email:
+                return Response(
+                    {'error': 'Email not found in token'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get Customer role for new users
+            from django.db.models import Q
+            try:
+                customer_role = Role.objects.get(Q(slug='customer') | Q(name__iexact='customer'))
+            except Role.DoesNotExist:
+                customer_role = None
+            
+            # Get or create user
+            defaults = {
+                'is_active': True,
+                'role': customer_role
+            }
+            
+            user, created = User.objects.get_or_create(
+                email=email,
+                defaults=defaults
+            )
+            
+            # Generate OTP
+            otp = user.generate_otp()
+            
+            # Send OTP via email asynchronously
+            send_otp_email.delay(user.id, otp)
+            
+            return Response({
+                'success': True,
+                'message': 'OTP sent to your email',
+                'email': email,
+                'is_new_user': created,
+            }, status=status.HTTP_200_OK)
+            
+        except auth.InvalidIdTokenError:
+            return Response(
+                {'error': 'Invalid ID token'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to send OTP: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+# Admin Login
+
+class AdminLoginView(APIView):
+    """
+    Admin login using email and password.
+    """
+    permission_classes = [AllowAny]
+    serializer_class = AdminLoginSerializer
+    @extend_schema(
+        description="Admin login using email and password",
+        request=AdminLoginSerializer,
+        responses={200: LoginResponseSerializer},
+        tags=['Authentication']
+    )
+    def post(self, request):
+        """Admin login using email and password."""
+        serializer = self.serializer_class(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response(
+                {'error': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        email = serializer.validated_data['email']
+        password = serializer.validated_data['password']
+        
+        try:
+            # Get user by email
+            user = User.objects.select_related('role').get(email=email)
+            
+            # Check if user is active
+            if not user.is_active:
+                return Response(
+                    {'error': 'User account is disabled'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Check password
+            if not user.check_password(password):
+                return Response(
+                    {'error': 'Invalid email or password'},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+            
+            # Check if user has admin role
+            if not user.role or user.role.slug != 'admin':
+                return Response(
+                    {'error': 'Access denied. Admin privileges required.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Generate JWT tokens
+            refresh = RefreshToken.for_user(user)
+            access_token = str(refresh.access_token)
+            refresh_token = str(refresh)
+
+            profile_shareable_link = request.build_absolute_uri(
+                reverse('admin-profile')
+            )
+            
+            return Response({
+                'success': True,
+                'message': 'Login successful',
+                'access_token': access_token,
+                'refresh_token': refresh_token,
+                'user': {
+                    'id': user.id,
+                    'email': user.email,
+                    'role': user.role_name,
+                    'phone_number': user.phone_number,
+                    'status': user.status,
+                    'is_active': user.is_active,
+                    'profile_shareable_link': profile_shareable_link,
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Invalid email or password'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Login failed: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class HealthCheckView(APIView):
     """
@@ -401,3 +615,161 @@ class HealthCheckView(APIView):
             'version': '1.0.0',
             'timestamp': str(request.META.get('HTTP_DATE', '')),
         })
+
+
+# ====================
+# Profile Update Views
+# ====================
+
+class UserProfileUpdateView(APIView):
+    """
+    API endpoint for users to update their own profile.
+    Regular users can update: name, phone_number, title, profile_picture
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserProfileUpdateSerializer
+    
+    @extend_schema(
+        description="Update current user's profile",
+        request=UserProfileUpdateSerializer,
+        responses={200: UserSerializer},
+        tags=['Profile']
+    )
+    def patch(self, request):
+        """Update user's own profile."""
+        user = request.user
+        serializer = self.serializer_class(
+            user, 
+            data=request.data, 
+            partial=True
+        )
+        
+        if not serializer.is_valid():
+            return Response(
+                {'error': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            updated_user = serializer.save()
+            user_serializer = UserSerializer(updated_user)
+            
+            return Response({
+                'success': True,
+                'message': 'Profile updated successfully',
+                'user': user_serializer.data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to update profile: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        description="Get current user's profile",
+        responses={200: UserSerializer},
+        tags=['Profile']
+    )
+    def get(self, request):
+        """Get current user's profile."""
+        user = request.user
+        serializer = UserSerializer(user)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AdminProfileUpdateView(APIView):
+    """
+    API endpoint for admins to update their own profile.
+    Admins can update: name, phone_number, title, profile_picture, status
+    """
+    permission_classes = [IsAuthenticated, IsAdmin]
+    serializer_class = AdminProfileUpdateSerializer
+    
+    @extend_schema(
+        description="Update admin's own profile (admin only)",
+        request=AdminProfileUpdateSerializer,
+        responses={200: OpenApiTypes.OBJECT},
+        tags=['Profile']
+    )
+    def patch(self, request):
+        """Update admin's own profile."""
+        user = request.user
+        
+        # Verify user has admin role
+        if not user.role or user.role.slug != 'admin':
+            return Response(
+                {'error': 'Access denied. Admin privileges required.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        admin_profile, _ = AdminProfile.objects.get_or_create(user=user)
+        user_serializer = UserProfileUpdateSerializer(user, data=request.data, partial=True)
+        profile_serializer = self.serializer_class(admin_profile, data=request.data, partial=True)
+
+        user_valid = user_serializer.is_valid()
+        profile_valid = profile_serializer.is_valid()
+        if not user_valid or not profile_valid:
+            return Response(
+                {
+                    'error': {
+                        'user': user_serializer.errors,
+                        'admin_profile': profile_serializer.errors,
+                    }
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            with transaction.atomic():
+                updated_user = user_serializer.save()
+                updated_profile = profile_serializer.save()
+
+            user_data = UserSerializer(updated_user).data
+            user_data.update(
+                {
+                    'bio': updated_profile.bio,
+                    'department': updated_profile.department,
+                    'location': updated_profile.location,
+                }
+            )
+            
+            return Response({
+                'success': True,
+                'message': 'Admin profile updated successfully',
+                'user': user_data,
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to update admin profile: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        description="Get admin's own profile (admin only)",
+        responses={200: OpenApiTypes.OBJECT},
+        tags=['Profile']
+    )
+    def get(self, request):
+        """Get admin's own profile."""
+        user = request.user
+        
+        # Verify user has admin role
+        if not user.role or user.role.slug != 'admin':
+            return Response(
+                {'error': 'Access denied. Admin privileges required.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        admin_profile, _ = AdminProfile.objects.get_or_create(user=user)
+        user_data = UserSerializer(user).data
+        user_data.update(
+            {
+                'bio': admin_profile.bio,
+                'department': admin_profile.department,
+                'location': admin_profile.location,
+            }
+        )
+        return Response({'user': user_data}, status=status.HTTP_200_OK)
+

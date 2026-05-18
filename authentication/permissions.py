@@ -24,6 +24,7 @@ class PermissionConstants:
     # Communication Permissions
     SEND_RECEIVE_MESSAGES = 'send_receive_messages'
     CALLING = 'calling'
+    SCREEN_SHARE = 'screen_share'
     
     # Channel Permissions
     CREATE_CHANNELS = 'create_channels'
@@ -49,6 +50,7 @@ class PermissionConstants:
             cls.MANAGE_CONTACTS,
             cls.SEND_RECEIVE_MESSAGES,
             cls.CALLING,
+            cls.SCREEN_SHARE,
             cls.CREATE_CHANNELS,
             cls.JOIN_CHANNELS,
             cls.UPLOAD_FILES,
@@ -72,6 +74,7 @@ class PermissionConstants:
             'communication': [
                 cls.SEND_RECEIVE_MESSAGES,
                 cls.CALLING,
+                cls.SCREEN_SHARE,
             ],
             'channels': [
                 cls.CREATE_CHANNELS,
