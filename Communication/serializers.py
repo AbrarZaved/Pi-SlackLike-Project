@@ -236,6 +236,7 @@ class WorkspaceSerializer(serializers.ModelSerializer):
             'picture',
             'slug',
             'is_active',
+            'is_default',
             'shareable_url',
             'created_by',
             'channels',
@@ -274,8 +275,8 @@ class WorkspaceListSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Workspace
-        fields = ['id', 'name', 'picture', 'created_by', 'channels_count', 'users_count', 'is_active', 'created_at']
-        read_only_fields = ['id', 'picture', 'created_by', 'created_at']
+        fields = ['id', 'name', 'picture', 'created_by', 'channels_count', 'users_count', 'is_active', 'is_default', 'created_at']
+        read_only_fields = ['id', 'picture', 'created_by', 'is_default', 'created_at']
     
     def get_channels_count(self, obj):
         return obj.channels.count()

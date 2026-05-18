@@ -433,6 +433,10 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
     """
     queryset = Workspace.objects.all().prefetch_related('users', 'channels')
     permission_classes = [IsAuthenticated]
+
+    def _unset_other_defaults(self, workspace):
+        if workspace.user_id and workspace.is_default:
+            Workspace.objects.filter(user=workspace.user, is_default=True).exclude(pk=workspace.pk).update(is_default=False)
     
     def get_serializer_class(self):
         """Use lightweight serializer for list action"""
@@ -494,7 +498,12 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
         """Create a new workspace"""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save(user=request.user)
+        has_workspace = Workspace.objects.filter(user=request.user).exists()
+        if not has_workspace:
+            workspace = serializer.save(user=request.user, is_default=True)
+        else:
+            workspace = serializer.save(user=request.user)
+        self._unset_other_defaults(workspace)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     
     @extend_schema(
@@ -527,7 +536,9 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(workspace, data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        workspace = serializer.save()
+        if serializer.validated_data.get('is_default') is True:
+            self._unset_other_defaults(workspace)
         return Response(serializer.data)
     
     @extend_schema(
@@ -549,7 +560,9 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(workspace, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        workspace = serializer.save()
+        if serializer.validated_data.get('is_default') is True:
+            self._unset_other_defaults(workspace)
         return Response(serializer.data)
     
     @extend_schema(
