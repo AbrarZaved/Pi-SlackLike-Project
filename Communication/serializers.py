@@ -38,6 +38,12 @@ class ChannelSerializer(serializers.ModelSerializer):
         required=False,
         source='users'
     )
+    workspace_id = serializers.PrimaryKeyRelatedField(
+        queryset=Workspace.objects.all(),
+        write_only=True,
+        required=False,
+        source='workspace'
+    )
     users_count = serializers.SerializerMethodField()
     shareable_url = serializers.SerializerMethodField()
     workspaces_info = serializers.SerializerMethodField()
@@ -55,12 +61,38 @@ class ChannelSerializer(serializers.ModelSerializer):
             'created_by',
             'users',
             'user_ids',
+            'workspace_id',
             'users_count',
             'is_active',
             'created_at',
             'updated_at'
         ]
         read_only_fields = ['id', 'slug', 'shareable_url', 'workspaces_info', 'created_by', 'created_at', 'updated_at']
+
+    def validate(self, attrs):
+        """Ensure workspace is provided for channel creation."""
+        if self.instance is None:
+            workspace = attrs.get('workspace') or self.context.get('workspace')
+            if workspace is None:
+                raise serializers.ValidationError({
+                    'workspace_id': 'workspace_id query param is required to create a channel.'
+                })
+            attrs['workspace'] = workspace
+        else:
+            attrs.pop('workspace', None)
+        return attrs
+
+    def create(self, validated_data):
+        workspace = validated_data.pop('workspace', None) or self.context.get('workspace')
+        users = validated_data.pop('users', [])
+
+        channel = Channel.objects.create(**validated_data)
+        if users:
+            channel.users.add(*users)
+        if workspace:
+            workspace.channels.add(channel)
+
+        return channel
     
     def get_users_count(self, obj):
         """Get the count of users in the channel"""

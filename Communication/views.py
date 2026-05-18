@@ -143,11 +143,59 @@ class ChannelViewSet(viewsets.ModelViewSet):
         description="Create a new channel",
         request=ChannelSerializer,
         responses={201: ChannelSerializer},
+        parameters=[
+            OpenApiParameter(
+                name='workspace_id',
+                type=OpenApiTypes.INT,
+                description='Workspace ID to create the channel under',
+                required=True
+            )
+        ],
         tags=['Channels']
     )
     def create(self, request):
         """Create a new channel"""
-        serializer = self.get_serializer(data=request.data)
+        workspace_id = request.query_params.get('workspace_id')
+        if not workspace_id:
+            return Response(
+                {'error': 'workspace_id query param is required'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            workspace_id_int = int(workspace_id)
+        except (TypeError, ValueError):
+            return Response(
+                {'error': 'workspace_id must be an integer'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            workspace = Workspace.objects.get(id=workspace_id_int)
+        except Workspace.DoesNotExist:
+            return Response(
+                {'error': 'Workspace not found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not _is_admin_user(request.user):
+            is_member = (
+                request.user == workspace.user
+                or workspace.users.filter(id=request.user.id).exists()
+            )
+            if not is_member:
+                return Response(
+                    {'error': 'You must be a member of this workspace to create a channel'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        data = request.data.copy()
+        data['workspace_id'] = workspace.id
+
+        serializer = self.get_serializer(
+            data=data,
+            context={'request': request, 'workspace': workspace}
+        )
         serializer.is_valid(raise_exception=True)
         serializer.save(user=request.user)
         return Response(serializer.data, status=status.HTTP_201_CREATED)

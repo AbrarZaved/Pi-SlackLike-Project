@@ -323,6 +323,7 @@ class SendOTPView(APIView):
                 'message': 'OTP sent to your email',
                 'email': email,
                 'is_new_user': created,
+                'otp':otp,  # Include OTP in response for testing purposes (remove in production)
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
