@@ -21,10 +21,19 @@ class ChannelUserSerializer(serializers.ModelSerializer):
 
 class CreatorSerializer(serializers.ModelSerializer):
     """Serializer for creator/owner user info"""
+    profile_picture = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ['id', 'email', 'name']
-        read_only_fields = ['id', 'email', 'name']
+        fields = ['id', 'email', 'name', 'profile_picture']
+        read_only_fields = ['id', 'email', 'name','profile_picture']
+
+    def get_profile_picture(self, obj: User):
+        if not getattr(obj, 'profile_picture', None):
+            return None
+        request = self.context.get('request')
+        url = obj.profile_picture.url
+        return request.build_absolute_uri(url) if request else url
 
 
 class ChannelSerializer(serializers.ModelSerializer):
@@ -407,14 +416,32 @@ class ChatMessageHistorySerializer(serializers.ModelSerializer):
         model = ChatMessage
         fields = ['id', 'content', 'created_at', 'updated_at', 'sender', 'reply_to', 'forwarded_from', 'reactions', 'attachments']
 
+    def _safe_text(self, value):
+        if value is None:
+            return None
+        if isinstance(value, bytes):
+            return value.decode('utf-8', errors='replace')
+        return str(value)
+
+    def _profile_picture_url(self, user: User):
+        if not user:
+            return None
+        picture = getattr(user, 'profile_picture', None)
+        if not picture:
+            return None
+        request = self.context.get('request')
+        url = picture.url
+        return request.build_absolute_uri(url) if request else url
+
     def _mini_ref(self, msg: ChatMessage):
         return {
             'id': msg.id,
-            'content': msg.content,
+            'content': self._safe_text(msg.content),
             'sender': {
                 'id': msg.sender_id,
                 'name': getattr(msg.sender, 'name', None),
                 'email': getattr(msg.sender, 'email', None),
+                'profile_picture': self._profile_picture_url(msg.sender),
             },
             'created_at': msg.created_at,
         }
@@ -461,8 +488,8 @@ class ChatMessageHistorySerializer(serializers.ModelSerializer):
                     'id': att.id,
                     'kind': att.kind,
                     'url': url,
-                    'original_name': att.original_name,
-                    'content_type': att.content_type,
+                    'original_name': self._safe_text(att.original_name),
+                    'content_type': self._safe_text(att.content_type),
                     'size': att.size,
                     'created_at': att.created_at,
                 }
