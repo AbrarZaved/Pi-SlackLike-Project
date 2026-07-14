@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*.log
+
+# Local DB and secrets (never bake into the image)
+db.sqlite3
+*.sqlite3
+.env
+serviceAccount.json
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Runtime dirs (mounted as volumes instead)
+media/
+staticfiles/
+
+# VCS / OS
+.git/
+.gitignore
+.DS_Store
