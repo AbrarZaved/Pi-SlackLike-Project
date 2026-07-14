@@ -624,7 +624,19 @@ class GroupChatConsumer(BaseChatConsumer):
 
     @database_sync_to_async
     def _user_in_group(self, user_id: int, group_id: int) -> bool:
-        return Group.objects.filter(id=group_id, users__id=user_id).exists()
+        group = Group.objects.filter(id=group_id).first()
+        if not group:
+            return False
+
+        if group.users.filter(id=user_id).exists():
+            return True
+
+        # Allow group creator/admin even if not explicitly added; keep membership consistent.
+        if group.group_admin_id == user_id or group.user_id == user_id:
+            group.users.add(user_id)
+            return True
+
+        return False
 
 
 class DirectMessageConsumer(BaseChatConsumer):
