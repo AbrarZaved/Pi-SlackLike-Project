@@ -32,9 +32,17 @@ services:
              daphne -b 0.0.0.0 -p 8000 Pi.asgi:application"
     env_file:
       - .env
+    environment:
+      - DEBUG=False
+      - DB_HOST=db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - ALLOWED_HOSTS=1source.chat,www.1source.chat,localhost,127.0.0.1
+      - CORS_ALLOWED_ORIGINS=https://1source.chat,https://www.1source.chat
+      - CSRF_TRUSTED_ORIGINS=https://1source.chat,https://www.1source.chat
     volumes:
-      - static_volume:/app/staticfiles
-      - media_volume:/app/media
+      - ./staticfiles:/app/staticfiles
+      - ./media:/app/media
       - ./serviceAccount.json:/app/serviceAccount.json:ro
     ports:
       - "8000:8000"
@@ -50,8 +58,13 @@ services:
     command: celery -A Pi worker -l info
     env_file:
       - .env
+    environment:
+      - DEBUG=False
+      - DB_HOST=db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
     volumes:
-      - media_volume:/app/media
+      - ./media:/app/media
       - ./serviceAccount.json:/app/serviceAccount.json:ro
     depends_on:
       db:
@@ -65,6 +78,11 @@ services:
     command: celery -A Pi beat -l info
     env_file:
       - .env
+    environment:
+      - DEBUG=False
+      - DB_HOST=db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
     depends_on:
       db:
         condition: service_healthy
@@ -73,5 +91,3 @@ services:
 
 volumes:
   postgres_data:
-  static_volume:
-  media_volume:

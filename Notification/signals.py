@@ -9,6 +9,8 @@ from .services import create_notifications_for_role
 
 @receiver(post_save, sender=User)
 def create_notification_preferences(sender, instance: User, created: bool, **kwargs):
+	if kwargs.get('raw', False):
+		return
 	if not created:
 		return
 	NotificationPreference.objects.get_or_create(user=instance)

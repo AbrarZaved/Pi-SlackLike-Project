@@ -279,6 +279,13 @@ LIVEKIT_API_SECRET = env('LIVEKIT_API_SECRET', default='')
 
 
 # ====================
+# Firebase Configuration
+# ====================
+
+FIREBASE_SERVICE_ACCOUNT_JSON = env('FIREBASE_SERVICE_ACCOUNT_JSON') or str(BASE_DIR / 'serviceAccount.json')
+
+
+# ====================
 # OpenAPI 3.0 Configuration (drf-spectacular)
 # ====================
 
