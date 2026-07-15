@@ -136,11 +136,14 @@ ASGI_APPLICATION = 'Pi.asgi.application'
 # Channels (WebSocket) Configuration
 # ====================
 
-# In-memory channel layer is simplest and works for single-process dev.
-# If you later want multi-process / multi-server, switch to Redis via channels_redis.
+# Redis channel layer for multi-process/multi-server websocket messaging.
+REDIS_URL = env('REDIS_URL', default='redis://127.0.0.1:6379/0')
 CHANNEL_LAYERS = {
     'default': {
-        'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [REDIS_URL],
+        },
     }
 }
 
