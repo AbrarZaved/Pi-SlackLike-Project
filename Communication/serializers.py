@@ -56,7 +56,9 @@ class ChannelSerializer(serializers.ModelSerializer):
     users_count = serializers.SerializerMethodField()
     shareable_url = serializers.SerializerMethodField()
     workspaces_info = serializers.SerializerMethodField()
+    call_id = serializers.SerializerMethodField()
     call_token = serializers.SerializerMethodField()
+    call_details = serializers.SerializerMethodField()
     
     class Meta:
         model = Channel
@@ -73,11 +75,17 @@ class ChannelSerializer(serializers.ModelSerializer):
             'user_ids',
             'workspace_id',
             'users_count',
+            'call_id',
             'call_token',
+            'call_details',
             'created_at',
             'updated_at'
         ]
-        read_only_fields = ['id', 'slug', 'shareable_url', 'workspaces_info', 'created_by', 'created_at', 'updated_at', 'call_token']
+        read_only_fields = [
+            'id', 'slug', 'shareable_url', 'workspaces_info', 'created_by',
+            'created_at', 'updated_at', 'call_id', 'call_token', 'call_details'
+        ]
+
 
 
     def validate(self, attrs):
@@ -147,8 +155,8 @@ class ChannelSerializer(serializers.ModelSerializer):
                     )
         return None
 
-    def get_call_token(self, obj):
-        """Generate LiveKit call token for this channel for the requesting user."""
+    def _get_channel_call_data(self, obj):
+        """Helper to compute LiveKit call data for a channel."""
         request = self.context.get('request')
         if not request or not getattr(request, 'user', None) or not request.user.is_authenticated:
             return None
@@ -159,10 +167,11 @@ class ChannelSerializer(serializers.ModelSerializer):
 
         from Calls.models import Call
         from Calls.services.livekit import build_livekit_token
+        from django.conf import settings
 
-        # Check for active call in this channel or use default channel room name
         active_call = Call.objects.filter(channel=obj, is_active=True).first()
         room_name = active_call.room_name if active_call else f"channel_{obj.id}"
+        call_id = str(active_call.id) if active_call else None
 
         can_screen_share = user_has_permission(request.user, PermissionConstants.SCREEN_SHARE)
 
@@ -174,9 +183,28 @@ class ChannelSerializer(serializers.ModelSerializer):
                 can_subscribe=True,
                 can_screen_share=can_screen_share,
             )
-            return token_result.token
+            return {
+                'call_id': call_id,
+                'room_name': room_name,
+                'livekit_url': getattr(settings, 'LIVEKIT_URL', ''),
+                'token': token_result.token,
+                'can_screen_share': token_result.can_screen_share,
+                'is_active': bool(active_call),
+            }
         except Exception:
             return None
+
+    def get_call_id(self, obj):
+        data = self._get_channel_call_data(obj)
+        return data.get('call_id') if data else None
+
+    def get_call_token(self, obj):
+        data = self._get_channel_call_data(obj)
+        return data.get('token') if data else None
+
+    def get_call_details(self, obj):
+        return self._get_channel_call_data(obj)
+
 
 
 
