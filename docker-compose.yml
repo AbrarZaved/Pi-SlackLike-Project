@@ -37,6 +37,7 @@ services:
       - DB_HOST=db
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - ALLOWED_HOSTS=1source.chat,www.1source.chat,localhost,127.0.0.1
       - CORS_ALLOWED_ORIGINS=https://1source.chat,https://www.1source.chat
       - CSRF_TRUSTED_ORIGINS=https://1source.chat,https://www.1source.chat
@@ -63,6 +64,7 @@ services:
       - DB_HOST=db
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
     volumes:
       - ./media:/app/media
       - ./serviceAccount.json:/app/serviceAccount.json:ro
@@ -83,6 +85,7 @@ services:
       - DB_HOST=db
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
     depends_on:
       db:
         condition: service_healthy
