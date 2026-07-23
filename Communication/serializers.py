@@ -56,6 +56,7 @@ class ChannelSerializer(serializers.ModelSerializer):
     users_count = serializers.SerializerMethodField()
     shareable_url = serializers.SerializerMethodField()
     workspaces_info = serializers.SerializerMethodField()
+    call_token = serializers.SerializerMethodField()
     
     class Meta:
         model = Channel
@@ -72,11 +73,12 @@ class ChannelSerializer(serializers.ModelSerializer):
             'user_ids',
             'workspace_id',
             'users_count',
-            'is_active',
+            'call_token',
             'created_at',
             'updated_at'
         ]
-        read_only_fields = ['id', 'slug', 'shareable_url', 'workspaces_info', 'created_by', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'slug', 'shareable_url', 'workspaces_info', 'created_by', 'created_at', 'updated_at', 'call_token']
+
 
     def validate(self, attrs):
         """Ensure workspace is provided for channel creation."""
@@ -144,6 +146,38 @@ class ChannelSerializer(serializers.ModelSerializer):
                         f'/api/v1/communication/workspaces/{first_workspace.slug}/channels/join/{obj.slug}/'
                     )
         return None
+
+    def get_call_token(self, obj):
+        """Generate LiveKit call token for this channel for the requesting user."""
+        request = self.context.get('request')
+        if not request or not getattr(request, 'user', None) or not request.user.is_authenticated:
+            return None
+
+        from authentication.permissions import PermissionConstants, user_has_permission
+        if not user_has_permission(request.user, PermissionConstants.CALLING):
+            return None
+
+        from Calls.models import Call
+        from Calls.services.livekit import build_livekit_token
+
+        # Check for active call in this channel or use default channel room name
+        active_call = Call.objects.filter(channel=obj, is_active=True).first()
+        room_name = active_call.room_name if active_call else f"channel_{obj.id}"
+
+        can_screen_share = user_has_permission(request.user, PermissionConstants.SCREEN_SHARE)
+
+        try:
+            token_result = build_livekit_token(
+                user=request.user,
+                room_name=room_name,
+                can_publish=True,
+                can_subscribe=True,
+                can_screen_share=can_screen_share,
+            )
+            return token_result.token
+        except Exception:
+            return None
+
 
 
 class ChannelListSerializer(serializers.ModelSerializer):
