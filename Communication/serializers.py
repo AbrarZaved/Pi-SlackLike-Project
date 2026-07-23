@@ -58,6 +58,9 @@ class ChannelSerializer(serializers.ModelSerializer):
     workspaces_info = serializers.SerializerMethodField()
     call_id = serializers.SerializerMethodField()
     call_token = serializers.SerializerMethodField()
+    token = serializers.SerializerMethodField()
+    livekit_url = serializers.SerializerMethodField()
+    can_screen_share = serializers.SerializerMethodField()
     call_details = serializers.SerializerMethodField()
     
     class Meta:
@@ -77,14 +80,19 @@ class ChannelSerializer(serializers.ModelSerializer):
             'users_count',
             'call_id',
             'call_token',
+            'token',
+            'livekit_url',
+            'can_screen_share',
             'call_details',
             'created_at',
             'updated_at'
         ]
         read_only_fields = [
             'id', 'slug', 'shareable_url', 'workspaces_info', 'created_by',
-            'created_at', 'updated_at', 'call_id', 'call_token', 'call_details'
+            'created_at', 'updated_at', 'call_id', 'call_token', 'token',
+            'livekit_url', 'can_screen_share', 'call_details'
         ]
+
 
 
 
@@ -202,8 +210,21 @@ class ChannelSerializer(serializers.ModelSerializer):
         data = self._get_channel_call_data(obj)
         return data.get('token') if data else None
 
+    def get_token(self, obj):
+        data = self._get_channel_call_data(obj)
+        return data.get('token') if data else None
+
+    def get_livekit_url(self, obj):
+        data = self._get_channel_call_data(obj)
+        return data.get('livekit_url') if data else ''
+
+    def get_can_screen_share(self, obj):
+        data = self._get_channel_call_data(obj)
+        return data.get('can_screen_share') if data else False
+
     def get_call_details(self, obj):
         return self._get_channel_call_data(obj)
+
 
 
 
