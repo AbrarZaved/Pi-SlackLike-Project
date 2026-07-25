@@ -24,6 +24,7 @@ from .serializers import (
     ChatMessageHistorySerializer,
     ChatAttachmentUploadSerializer,
     ChatAttachmentSerializer,
+    DirectMessageThreadListSerializer,
 )
 from authentication.models import User
 
@@ -1229,6 +1230,21 @@ class ChatViewSet(viewsets.ViewSet):
         items.reverse()
         serializer = ChatMessageHistorySerializer(items, many=True, context={'request': request})
         return Response({'thread_id': thread.id, 'messages': serializer.data})
+
+    @extend_schema(
+        description="Get list of all 1:1 DM conversations for the authenticated user.",
+        tags=['Chat']
+    )
+    def dm_list(self, request):
+        user = request.user
+        threads = (
+            DirectMessageThread.objects.filter(Q(user_a=user) | Q(user_b=user))
+            .select_related('user_a', 'user_b')
+            .prefetch_related('messages__sender')
+            .order_by('-updated_at')
+        )
+        serializer = DirectMessageThreadListSerializer(threads, many=True, context={'request': request})
+        return Response(serializer.data)
 
 
 class ChatUploadView(APIView):

@@ -805,3 +805,36 @@ class MentionNotificationTests(TransactionTestCase):
 		self.assertIn('chat.channel_message', o_types)
 
 		await sender_ws.disconnect()
+
+
+class DirectMessageListAPITests(APITestCase):
+	def setUp(self):
+		from Communication.models import DirectMessageThread
+		self.user1 = User.objects.create_user(email='user1@example.com', password='password123', name='User One')
+		self.user2 = User.objects.create_user(email='user2@example.com', password='password123', name='User Two')
+		self.user3 = User.objects.create_user(email='user3@example.com', password='password123', name='User Three')
+
+		self.thread1 = DirectMessageThread.get_or_create_for_users(self.user1, self.user2)
+		self.thread2 = DirectMessageThread.get_or_create_for_users(self.user1, self.user3)
+
+		ChatMessage.objects.create(sender=self.user2, dm_thread=self.thread1, content="Hello from user 2")
+		ChatMessage.objects.create(sender=self.user1, dm_thread=self.thread2, content="Hello to user 3")
+
+	def test_get_dm_chat_list(self):
+		self.client.force_authenticate(user=self.user1)
+		url = reverse('chat-dm-list')
+		response = self.client.get(url)
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		self.assertEqual(len(response.data), 2)
+
+		other_user_ids = {item['other_user']['id'] for item in response.data}
+		self.assertEqual(other_user_ids, {self.user2.id, self.user3.id})
+
+		first_item = response.data[0]
+		self.assertIn('thread_id', first_item)
+		self.assertIn('other_user', first_item)
+		self.assertIn('last_message', first_item)
+		self.assertIsNotNone(first_item['last_message'])
+		self.assertIn('content', first_item['last_message'])
+

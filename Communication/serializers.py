@@ -602,3 +602,68 @@ class ChatAttachmentSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         url = obj.file.url
         return request.build_absolute_uri(url) if request else url
+
+
+class DirectMessageThreadListSerializer(serializers.ModelSerializer):
+    thread_id = serializers.IntegerField(source='id', read_only=True)
+    other_user = serializers.SerializerMethodField()
+    last_message = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DirectMessageThread
+        fields = ['thread_id', 'other_user', 'last_message', 'created_at', 'updated_at']
+        read_only_fields = ['thread_id', 'other_user', 'last_message', 'created_at', 'updated_at']
+
+    def get_other_user(self, obj: DirectMessageThread):
+        request = self.context.get('request')
+        if not request or not getattr(request, 'user', None):
+            return None
+        current_user = request.user
+        other = obj.user_b if obj.user_a_id == current_user.id else obj.user_a
+        if not other:
+            return None
+
+        picture = getattr(other, 'profile_picture', None)
+        picture_url = None
+        if picture:
+            url = picture.url
+            picture_url = request.build_absolute_uri(url) if request else url
+
+        return {
+            'id': other.id,
+            'name': getattr(other, 'name', None),
+            'email': getattr(other, 'email', None),
+            'phone_number': getattr(other, 'phone_number', None),
+            'profile_picture': picture_url,
+        }
+
+    def get_last_message(self, obj: DirectMessageThread):
+        last_msg = obj.messages.order_by('-created_at').first()
+        if not last_msg:
+            return None
+
+        request = self.context.get('request')
+        sender = last_msg.sender
+        sender_picture = getattr(sender, 'profile_picture', None)
+        sender_picture_url = None
+        if sender_picture and request:
+            sender_picture_url = request.build_absolute_uri(sender_picture.url)
+        elif sender_picture:
+            sender_picture_url = sender_picture.url
+
+        content = last_msg.content
+        if isinstance(content, bytes):
+            content = content.decode('utf-8', errors='replace')
+
+        return {
+            'id': last_msg.id,
+            'content': content,
+            'sender': {
+                'id': sender.id,
+                'name': getattr(sender, 'name', None),
+                'email': getattr(sender, 'email', None),
+                'profile_picture': sender_picture_url,
+            },
+            'created_at': last_msg.created_at,
+        }
+
