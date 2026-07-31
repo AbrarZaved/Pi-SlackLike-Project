@@ -5,7 +5,7 @@ Serializers for Communication APIs
 from rest_framework import serializers
 from .models import Channel, Workspace, Group, ChatMessage, ChatReaction, DirectMessageThread, ChatAttachment
 from authentication.models import User
-
+from django.conf import settings as django_settings
 
 # ====================
 # Channel Serializers
@@ -581,12 +581,49 @@ class ChatMessageHistorySerializer(serializers.ModelSerializer):
 
 
 class ChatAttachmentUploadSerializer(serializers.Serializer):
+    """Validates a chat attachment upload.
+
+    Files larger than MAX_CHAT_UPLOAD_SIZE (2 MB) are rejected.
+    """
+
+    MAX_UPLOAD_SIZE = getattr(django_settings, 'MAX_CHAT_UPLOAD_SIZE', 2 * 1024 * 1024)
+    MAX_UPLOAD_SIZE_ERROR = getattr(
+        django_settings,
+        'MAX_CHAT_UPLOAD_SIZE_ERROR',
+        'The selected file exceeds the maximum allowed size of 2 MB.',
+    )
+
     file = serializers.FileField(required=True)
     kind = serializers.ChoiceField(
         choices=[c[0] for c in ChatAttachment.KIND_CHOICES],
         required=False,
         default=ChatAttachment.KIND_FILE,
     )
+
+    def validate_file(self, value):
+        size = int(getattr(value, 'size', 0) or 0)
+        if size <= 0:
+            raise serializers.ValidationError('The selected file is empty.')
+        if size > self.MAX_UPLOAD_SIZE:
+            raise serializers.ValidationError(self.MAX_UPLOAD_SIZE_ERROR)
+        return value
+
+    def validate(self, attrs):
+        """Infer the attachment kind from the content type when not supplied."""
+        uploaded = attrs.get('file')
+        content_type = (getattr(uploaded, 'content_type', '') or '').lower()
+
+        if not self.initial_data.get('kind'):
+            if content_type.startswith('image/'):
+                attrs['kind'] = ChatAttachment.KIND_IMAGE
+            elif content_type.startswith('audio/'):
+                attrs['kind'] = ChatAttachment.KIND_AUDIO
+            elif content_type.startswith('video/'):
+                attrs['kind'] = ChatAttachment.KIND_VIDEO
+            else:
+                attrs['kind'] = ChatAttachment.KIND_FILE
+
+        return attrs
 
 
 class ChatAttachmentSerializer(serializers.ModelSerializer):

@@ -89,11 +89,12 @@ class UserSerializer(serializers.ModelSerializer):
     """
     role_name = serializers.CharField(source='role.name', read_only=True)
     permissions = serializers.SerializerMethodField()
-    
+    profile_picture = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         fields = [
-            'id', 'name', 'email', 'phone_number', 'title', 
+            'id', 'name', 'email', 'phone_number', 'title',
             'profile_picture', 'status', 'role', 'role_name', 'is_active',
             'is_verified', 'created_at', 'updated_at', 'permissions'
         ]
@@ -101,13 +102,24 @@ class UserSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'password': {'write_only': True}
         }
-    
+
     def get_permissions(self, obj):
         """Get list of permission codenames for the user."""
         if obj.role:
             return list(obj.role.permissions.values_list('codename', flat=True))
         return []
 
+    def get_profile_picture(self, obj):
+        """Return the absolute URL of the user's profile picture (or None)."""
+        picture = getattr(obj, 'profile_picture', None)
+        if not picture:
+            return None
+        try:
+            url = picture.url
+        except ValueError:
+            return None
+        request = self.context.get('request')
+        return request.build_absolute_uri(url) if request else url
 
 class UserCreateSerializer(serializers.ModelSerializer):
     """

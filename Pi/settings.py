@@ -371,3 +371,32 @@ EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=True)
 EMAIL_HOST_USER = env('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL')
+
+
+
+# ====================
+# Firebase / Push Notifications (FCM)
+# ====================
+
+# Path to the Firebase service-account JSON file (or the JSON itself as a dict).
+FIREBASE_SERVICE_ACCOUNT_JSON = env(
+    'FIREBASE_SERVICE_ACCOUNT_JSON',
+    default=str(BASE_DIR / 'firebase-service-account.json'),
+)
+
+# Master kill-switch for outgoing FCM pushes (admin toggle still applies on top).
+PUSH_NOTIFICATIONS_ENABLED = env.bool('PUSH_NOTIFICATIONS_ENABLED', default=True)
+
+# Android notification channel id the mobile app registers.
+FCM_ANDROID_CHANNEL_ID = env('FCM_ANDROID_CHANNEL_ID', default='chat_messages')
+
+# ====================
+# Chat attachment upload limits
+# ====================
+
+MAX_CHAT_UPLOAD_SIZE = 2 * 1024 * 1024  # 2 MB
+MAX_CHAT_UPLOAD_SIZE_ERROR = 'The selected file exceeds the maximum allowed size of 2 MB.'
+
+# Reject oversized bodies early, before they are fully buffered.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024

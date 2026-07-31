@@ -36,6 +36,20 @@ from Admin.models import AdminProfile
 
 
 # ====================
+# Helpers
+# ====================
+
+def build_absolute_media_url(request, file_field):
+    """Return an absolute URL for a FileField/ImageField, or None if empty."""
+    if not file_field:
+        return None
+    try:
+        url = file_field.url
+    except ValueError:
+        return None
+    return request.build_absolute_uri(url) if request else url
+
+# ====================
 # User ViewSet
 # ====================
 
@@ -88,6 +102,7 @@ class UserViewSet(viewsets.ModelViewSet):
                 'id': user.id,
                 'email': user.email,
                 'name': user.name,
+                'profile_picture': build_absolute_media_url(request, user.profile_picture),
                 'role': user.role_name,
                 'status': user.status,
                 'is_active': user.is_active,
@@ -411,6 +426,8 @@ class VerifyOTPView(APIView):
                     'user': {
                         'id': user.id,
                         'email': user.email,
+                        'name': user.name,
+                        'profile_picture': build_absolute_media_url(request, user.profile_picture),
                         'role': user.role_name,
                         'phone_number': user.phone_number,
                         'status': user.status,
@@ -579,6 +596,8 @@ class AdminLoginView(APIView):
                 'user': {
                     'id': user.id,
                     'email': user.email,
+                    'name': user.name,
+                    'profile_picture': build_absolute_media_url(request, user.profile_picture),
                     'role': user.role_name,
                     'phone_number': user.phone_number,
                     'status': user.status,
@@ -652,7 +671,7 @@ class UserProfileUpdateView(APIView):
         
         try:
             updated_user = serializer.save()
-            user_serializer = UserSerializer(updated_user)
+            user_serializer = UserSerializer(updated_user, context={'request': request})
             
             return Response({
                 'success': True,
@@ -674,7 +693,7 @@ class UserProfileUpdateView(APIView):
     def get(self, request):
         """Get current user's profile."""
         user = request.user
-        serializer = UserSerializer(user)
+        serializer = UserSerializer(user, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -725,7 +744,7 @@ class AdminProfileUpdateView(APIView):
                 updated_user = user_serializer.save()
                 updated_profile = profile_serializer.save()
 
-            user_data = UserSerializer(updated_user).data
+            user_data = UserSerializer(updated_user, context={'request': request}).data
             user_data.update(
                 {
                     'bio': updated_profile.bio,
@@ -763,7 +782,7 @@ class AdminProfileUpdateView(APIView):
             )
         
         admin_profile, _ = AdminProfile.objects.get_or_create(user=user)
-        user_data = UserSerializer(user).data
+        user_data = UserSerializer(user, context={'request': request}).data
         user_data.update(
             {
                 'bio': admin_profile.bio,

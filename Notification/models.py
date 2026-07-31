@@ -83,3 +83,43 @@ class Notification(models.Model):
 
 	def __str__(self):
 		return f"Notification(id={self.id}, user_id={self.user_id}, type={self.notification_type})"
+
+
+class DeviceToken(models.Model):
+	"""An FCM registration token for one of a user's devices.
+
+	The mobile/web client registers its token after login and unregisters it on
+	logout. Push notifications are fanned out to every active token of a user.
+	"""
+
+	PLATFORM_ANDROID = 'android'
+	PLATFORM_IOS = 'ios'
+	PLATFORM_WEB = 'web'
+	PLATFORM_CHOICES = (
+		(PLATFORM_ANDROID, 'Android'),
+		(PLATFORM_IOS, 'iOS'),
+		(PLATFORM_WEB, 'Web'),
+	)
+
+	user = models.ForeignKey(
+		settings.AUTH_USER_MODEL,
+		on_delete=models.CASCADE,
+		related_name='device_tokens',
+	)
+	token = models.CharField(max_length=512, unique=True)
+	platform = models.CharField(max_length=16, choices=PLATFORM_CHOICES, default=PLATFORM_ANDROID)
+	device_id = models.CharField(max_length=255, blank=True)
+	is_active = models.BooleanField(default=True)
+	last_used_at = models.DateTimeField(auto_now=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		verbose_name = 'Device Token'
+		verbose_name_plural = 'Device Tokens'
+		ordering = ['-created_at']
+		indexes = [
+			models.Index(fields=['user', 'is_active']),
+		]
+
+	def __str__(self):
+		return f"DeviceToken(user_id={self.user_id}, platform={self.platform})"

@@ -1248,20 +1248,30 @@ class ChatViewSet(viewsets.ViewSet):
 
 
 class ChatUploadView(APIView):
-    """Multipart upload endpoint for chat attachments."""
+    """Multipart upload endpoint for chat attachments (images and files).
+
+    Maximum allowed size is 2 MB; larger files are rejected with a clear message.
+    """
 
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
     @extend_schema(
-        description="Upload a file to be attached to a chat message. Returns an attachment id to use in websocket message.send.",
+        description=(
+            "Upload an image or file to be attached to a chat message. "
+            "Maximum file size is 2 MB. Returns an attachment id to use in websocket message.send."
+        ),
         request=ChatAttachmentUploadSerializer,
         responses={201: ChatAttachmentSerializer},
         tags=['Chat'],
     )
     def post(self, request):
         ser = ChatAttachmentUploadSerializer(data=request.data)
-        ser.is_valid(raise_exception=True)
+        if not ser.is_valid():
+            return Response(
+                {'success': False, 'error': ser.errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         uploaded = ser.validated_data['file']
         kind = ser.validated_data.get('kind', ChatAttachment.KIND_FILE)
@@ -1277,4 +1287,3 @@ class ChatUploadView(APIView):
 
         out = ChatAttachmentSerializer(att, context={'request': request}).data
         return Response(out, status=status.HTTP_201_CREATED)
-

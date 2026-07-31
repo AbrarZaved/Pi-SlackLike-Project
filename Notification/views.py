@@ -5,8 +5,13 @@ from rest_framework import status
 
 from authentication.permissions import IsAdmin
 
-from .models import NotificationPreference, SystemSettings, Notification
-from .serializers import NotificationPreferenceSerializer, SystemSettingsSerializer, NotificationSerializer
+from .models import NotificationPreference, SystemSettings, Notification, DeviceToken
+from .serializers import (
+	NotificationPreferenceSerializer,
+	SystemSettingsSerializer,
+	NotificationSerializer,
+	DeviceTokenSerializer,
+)
 from .services import mark_all_as_read
 
 
@@ -60,3 +65,44 @@ class MarkAllNotificationsReadView(APIView):
 	def post(self, request):
 		updated = mark_all_as_read(user=request.user)
 		return Response({'marked_read': updated}, status=status.HTTP_200_OK)
+
+
+class DeviceTokenRegisterView(APIView):
+	"""Register (or refresh) the caller's FCM device token."""
+
+	permission_classes = [IsAuthenticated]
+	serializer_class = DeviceTokenSerializer
+
+	def post(self, request):
+		serializer = DeviceTokenSerializer(data=request.data)
+		serializer.is_valid(raise_exception=True)
+
+		token = serializer.validated_data['token']
+		defaults = {
+			'user': request.user,
+			'platform': serializer.validated_data.get('platform', DeviceToken.PLATFORM_ANDROID),
+			'device_id': serializer.validated_data.get('device_id', ''),
+			'is_active': True,
+		}
+
+		# A token belongs to exactly one device, so re-assign it on login.
+		obj, created = DeviceToken.objects.update_or_create(token=token, defaults=defaults)
+
+		return Response(
+			DeviceTokenSerializer(obj).data,
+			status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+		)
+
+
+class DeviceTokenUnregisterView(APIView):
+	"""Deactivate a device token (call this on logout)."""
+
+	permission_classes = [IsAuthenticated]
+
+	def post(self, request):
+		token = (request.data.get('token') or '').strip()
+		if not token:
+			return Response({'error': 'token is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+		updated = DeviceToken.objects.filter(user=request.user, token=token).update(is_active=False)
+		return Response({'unregistered': bool(updated)}, status=status.HTTP_200_OK)

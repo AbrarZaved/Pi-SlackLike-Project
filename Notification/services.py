@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Iterable, List, Optional
 
 from asgiref.sync import async_to_sync
@@ -10,6 +11,8 @@ from django.utils import timezone
 from authentication.models import User
 
 from .models import Notification, NotificationPreference, SystemSettings
+
+logger = logging.getLogger(__name__)
 
 
 def _get_system_settings() -> SystemSettings:
@@ -35,6 +38,43 @@ def _broadcast_to_user(*, user_id: int, payload: Dict[str, Any]) -> None:
 	)
 
 
+def _queue_push(*, notification: Notification) -> None:
+	"""Queue an FCM push for this notification once the transaction commits.
+
+	Runs out-of-band on Celery so chat/websocket latency is unaffected.
+	"""
+	payload: Dict[str, Any] = {
+		'notification_id': notification.id,
+		'notification_type': notification.notification_type,
+	}
+	payload.update(notification.data or {})
+
+	user_id = notification.user_id
+	title = notification.title
+	body = notification.body or ''
+
+	def _dispatch() -> None:
+		try:
+			from .tasks import send_push_notification
+
+			send_push_notification.delay(
+				user_id=user_id,
+				title=title,
+				body=body,
+				data=payload,
+			)
+		except Exception:
+			# Broker unavailable: fall back to sending inline, never break the caller.
+			try:
+				from .push import send_push_to_user
+
+				send_push_to_user(user_id=user_id, title=title, body=body, data=payload)
+			except Exception:
+				logger.exception('Unable to deliver push for notification_id=%s', payload['notification_id'])
+
+	transaction.on_commit(_dispatch)
+
+
 @transaction.atomic
 def create_notification_for_user(
 	*,
@@ -45,8 +85,9 @@ def create_notification_for_user(
 	data: Optional[Dict[str, Any]] = None,
 	target_role_slug: Optional[str] = None,
 	broadcast: bool = True,
+	push: bool = True,
 ) -> Optional[Notification]:
-	"""Create a notification row and optionally broadcast it via websocket.
+	"""Create a notification row, broadcast it over websocket and push it via FCM.
 
 	If push notifications are disabled globally or for the user, this returns None
 	and no notification is stored.
@@ -81,6 +122,9 @@ def create_notification_for_user(
 			},
 		)
 
+	if push:
+		_queue_push(notification=notification)
+
 	return notification
 
 
@@ -93,6 +137,7 @@ def create_notifications_for_role(
 	body: Optional[str] = None,
 	data: Optional[Dict[str, Any]] = None,
 	broadcast: bool = True,
+	push: bool = True,
 ) -> List[Notification]:
 	"""Create notifications for all users with a given role.
 
@@ -110,6 +155,7 @@ def create_notifications_for_role(
 			data=data,
 			target_role_slug=role_slug,
 			broadcast=broadcast,
+			push=push,
 		)
 		if n is not None:
 			created.append(n)

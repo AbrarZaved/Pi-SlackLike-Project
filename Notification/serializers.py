@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import NotificationPreference, SystemSettings, Notification
+from .models import NotificationPreference, SystemSettings, Notification, DeviceToken
 
 
 class NotificationPreferenceSerializer(serializers.ModelSerializer):
@@ -40,3 +40,16 @@ class NotificationSerializer(serializers.ModelSerializer):
 			'read_at',
 			'created_at',
 		]
+
+
+class DeviceTokenSerializer(serializers.ModelSerializer):
+	class Meta:
+		model = DeviceToken
+		fields = ['id', 'token', 'platform', 'device_id', 'is_active', 'created_at']
+		read_only_fields = ['id', 'is_active', 'created_at']
+
+	def validate_token(self, value):
+		value = (value or '').strip()
+		if not value:
+			raise serializers.ValidationError('FCM token is required.')
+		return value
