@@ -11,8 +11,10 @@ from .serializers import (
 	SystemSettingsSerializer,
 	NotificationSerializer,
 	DeviceTokenSerializer,
+	TestPushNotificationSerializer,
 )
-from .services import mark_all_as_read
+from .services import mark_all_as_read, create_notification_for_user
+from .push import send_push_to_tokens
 
 
 class MyNotificationPreferenceView(APIView):
@@ -106,3 +108,129 @@ class DeviceTokenUnregisterView(APIView):
 
 		updated = DeviceToken.objects.filter(user=request.user, token=token).update(is_active=False)
 		return Response({'unregistered': bool(updated)}, status=status.HTTP_200_OK)
+
+
+class TestPushNotificationView(APIView):
+	"""Send a test push notification to registered devices.
+
+	POST /api/v1/notifications/devices/test/
+
+	Targeting:
+	- No target  -> all active devices of the caller.
+	- user_id    -> all active devices of that user (admin only).
+	- token      -> one raw FCM token, even if not stored (admin only).
+	"""
+
+	permission_classes = [IsAuthenticated]
+	serializer_class = TestPushNotificationSerializer
+
+	def post(self, request):
+		serializer = TestPushNotificationSerializer(data=request.data)
+		serializer.is_valid(raise_exception=True)
+		payload = serializer.validated_data
+
+		title = payload.get('title') or '🔔 Test notification'
+		body = payload.get('body') or ''
+		extra = dict(payload.get('data') or {})
+		extra.setdefault('notification_type', 'test')
+
+		raw_token = (payload.get('token') or '').strip()
+		target_user_id = payload.get('user_id')
+
+		is_admin = bool(
+			getattr(request.user, 'role', None)
+			and request.user.role.slug == 'admin'
+		)
+		if (raw_token or target_user_id) and not is_admin:
+			return Response(
+				{'error': 'Only admins can send test notifications to other devices.'},
+				status=status.HTTP_403_FORBIDDEN,
+			)
+
+		# --- Raw token mode: bypass the DB entirely -------------------------
+		if raw_token:
+			report = send_push_to_tokens(
+				tokens=[raw_token],
+				title=title,
+				body=body,
+				data=extra,
+				deactivate_stale=False,
+			)
+			return Response(
+				{'target': 'raw_token', 'devices_targeted': 1, **report},
+				status=status.HTTP_200_OK,
+			)
+
+		# --- User mode ------------------------------------------------------
+		target_user = request.user
+		if target_user_id:
+			target_user = get_user_model().objects.filter(id=target_user_id).first()
+			if target_user is None:
+				return Response(
+					{'error': f'User {target_user_id} not found.'},
+					status=status.HTTP_404_NOT_FOUND,
+				)
+
+		devices = list(
+			DeviceToken.objects.filter(user=target_user, is_active=True)
+			.values('token', 'platform', 'device_id')
+		)
+		if not devices:
+			return Response(
+				{
+					'error': 'No active device tokens registered for this user.',
+					'hint': 'Register one first via POST /api/v1/notifications/devices/register/',
+					'user_id': target_user.id,
+				},
+				status=status.HTTP_400_BAD_REQUEST,
+			)
+
+		# Optional full end-to-end path: stores the row, broadcasts on the
+		# websocket and pushes through the normal Celery pipeline.
+		if payload.get('save_notification'):
+			notification = create_notification_for_user(
+				user=target_user,
+				notification_type='test',
+				title=title,
+				body=body,
+				data=extra,
+			)
+			if notification is None:
+				return Response(
+					{
+						'error': 'Push notifications are disabled globally or for this user.',
+						'user_id': target_user.id,
+					},
+					status=status.HTTP_409_CONFLICT,
+				)
+			return Response(
+				{
+					'target': 'user',
+					'user_id': target_user.id,
+					'mode': 'stored_and_queued',
+					'notification_id': notification.id,
+					'devices_targeted': len(devices),
+					'platforms': sorted({d['platform'] for d in devices}),
+					'detail': 'Notification stored, broadcast over websocket and queued for FCM.',
+				},
+				status=status.HTTP_202_ACCEPTED,
+			)
+
+		# Default: send straight to FCM now and return the delivery report.
+		report = send_push_to_tokens(
+			tokens=[d['token'] for d in devices],
+			title=title,
+			body=body,
+			data=extra,
+		)
+		return Response(
+			{
+				'target': 'user',
+				'user_id': target_user.id,
+				'mode': 'direct',
+				'devices_targeted': len(devices),
+				'platforms': sorted({d['platform'] for d in devices}),
+				**report,
+			},
+			status=status.HTTP_200_OK,
+		)

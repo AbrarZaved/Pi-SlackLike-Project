@@ -100,3 +100,107 @@ def send_push_to_user(
         DeviceToken.objects.filter(token__in=stale).update(is_active=False)
 
     return int(response.success_count)
+
+def send_push_to_tokens(
+    *,
+    tokens: List[str],
+    title: str,
+    body: Optional[str] = None,
+    data: Optional[Dict[str, Any]] = None,
+    deactivate_stale: bool = True,
+) -> Dict[str, Any]:
+    """Send an FCM push to an explicit list of registration tokens.
+
+    Unlike ``send_push_to_user`` this returns a detailed per-token report so it
+    can be used for debugging/testing from an API endpoint. Never raises.
+    """
+    tokens = [t for t in (tokens or []) if t]
+    if not tokens:
+        return {
+            'success_count': 0,
+            'failure_count': 0,
+            'deactivated_tokens': 0,
+            'results': [],
+            'error': 'no_active_device_tokens',
+        }
+
+    try:
+        from firebase_admin import messaging
+        from authentication.firebase import get_firebase_app
+
+        app = get_firebase_app()
+    except Exception:
+        logger.exception('FCM is not configured; skipping test push')
+        return {
+            'success_count': 0,
+            'failure_count': len(tokens),
+            'deactivated_tokens': 0,
+            'results': [],
+            'error': 'fcm_not_configured',
+        }
+
+    payload = _stringify_data(data)
+    payload.setdefault('click_action', 'FLUTTER_NOTIFICATION_CLICK')
+
+    message = messaging.MulticastMessage(
+        tokens=tokens,
+        notification=messaging.Notification(title=title, body=body or ''),
+        data=payload,
+        android=messaging.AndroidConfig(
+            priority='high',
+            notification=messaging.AndroidNotification(
+                sound='default',
+                channel_id=getattr(settings, 'FCM_ANDROID_CHANNEL_ID', 'chat_messages'),
+            ),
+        ),
+        apns=messaging.APNSConfig(
+            headers={'apns-priority': '10', 'apns-push-type': 'alert'},
+            payload=messaging.APNSPayload(
+                aps=messaging.Aps(sound='default', content_available=True),
+            ),
+        ),
+    )
+
+    try:
+        response = messaging.send_each_for_multicast(message, app=app)
+    except Exception as exc:
+        logger.exception('Failed to send test FCM push')
+        return {
+            'success_count': 0,
+            'failure_count': len(tokens),
+            'deactivated_tokens': 0,
+            'results': [],
+            'error': str(exc),
+        }
+
+    results: List[Dict[str, Any]] = []
+    stale: List[str] = []
+
+    for token, result in zip(tokens, response.responses):
+        masked = f"{token[:10]}...{token[-6:]}" if len(token) > 20 else token
+        entry: Dict[str, Any] = {'token': masked, 'success': bool(result.success)}
+
+        if not result.success:
+            exc = result.exception
+            code = str(getattr(exc, 'code', '') or '')
+            entry['code'] = code
+            entry['error'] = str(exc)
+            lowered = code.lower()
+            if (
+                'not-found' in lowered
+                or 'invalid-argument' in lowered
+                or 'unregistered' in lowered
+            ):
+                stale.append(token)
+
+        results.append(entry)
+
+    if stale and deactivate_stale:
+        DeviceToken.objects.filter(token__in=stale).update(is_active=False)
+
+    return {
+        'success_count': int(response.success_count),
+        'failure_count': int(response.failure_count),
+        'deactivated_tokens': len(stale),
+        'results': results,
+    }

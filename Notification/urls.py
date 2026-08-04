@@ -6,6 +6,7 @@ from .views import (
 	MarkAllNotificationsReadView,
 	DeviceTokenRegisterView,
 	DeviceTokenUnregisterView,
+	TestPushNotificationView,
 )
 
 
@@ -15,4 +16,5 @@ urlpatterns = [
 	path('mark-all-read/', MarkAllNotificationsReadView.as_view(), name='notifications-mark-all-read'),
 	path('devices/register/', DeviceTokenRegisterView.as_view(), name='device-token-register'),
 	path('devices/unregister/', DeviceTokenUnregisterView.as_view(), name='device-token-unregister'),
+	path('devices/test/', TestPushNotificationView.as_view(), name='device-push-test'),
 ]
