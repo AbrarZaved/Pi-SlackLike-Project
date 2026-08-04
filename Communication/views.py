@@ -1,7 +1,8 @@
+from click import group
 from django.shortcuts import render
 from django.db.models import Count, Q
 from django.utils import timezone
-from rest_framework import viewsets, status
+from rest_framework import request, viewsets, status
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.decorators import action
@@ -34,7 +35,20 @@ def _is_admin_user(user) -> bool:
     role = getattr(user, 'role', None)
     return bool(role and getattr(role, 'slug', None) == 'admin')
 
+def _safe_notify(*, user, notification_type: str, title: str, body: str = '', data: dict | None = None) -> None:
+    """Fire a notification without ever breaking the request it came from."""
+    try:
+        from Notification.services import create_notification_for_user
 
+        create_notification_for_user(
+            user=user,
+            notification_type=notification_type,
+            title=title,
+            body=body,
+            data=data or {},
+        )
+    except Exception:
+        pass
 # ====================
 # Channel ViewSet
 # ====================
@@ -378,13 +392,23 @@ class ChannelViewSet(viewsets.ModelViewSet):
         
         user_ids = serializer.validated_data['user_ids']
         users = User.objects.filter(id__in=user_ids)
+        removed_users = [u for u in users if channel.users.filter(id=u.id).exists()]
         channel.users.remove(*users)
-        
+
+        for removed_user in removed_users:
+            _safe_notify(
+                user=removed_user,
+                notification_type='channel.removed',
+                title='Removed from channel',
+                body=channel.name,
+                data={
+                    'channel_id': channel.id,
+                    'channel_slug': channel.slug,
+                    'removed_by_user_id': request.user.id,
+                },
+            )
+
         response_serializer = ChannelSerializer(channel)
-        return Response({
-            'message': f'Successfully removed {len(users)} user(s) from the channel',
-            'channel': response_serializer.data
-        })
     
     @extend_schema(
         description="Leave the channel (remove yourself)",
@@ -644,14 +668,28 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
         
         user_ids = serializer.validated_data['user_ids']
         users = User.objects.filter(id__in=user_ids)
+        removed_users = [u for u in users if workspace.users.filter(id=u.id).exists()]
         workspace.users.remove(*users)
-        
+
+        for removed_user in removed_users:
+            _safe_notify(
+                user=removed_user,
+                notification_type='workspace.removed',
+                title='Removed from workspace',
+                body=workspace.name,
+                data={
+                    'workspace_id': workspace.id,
+                    'workspace_slug': workspace.slug,
+                    'removed_by_user_id': request.user.id,
+                },
+            )
+
         response_serializer = WorkspaceSerializer(workspace)
         return Response({
-            'message': f'Successfully removed {len(users)} user(s) from the workspace',
+            'message': f'Successfully removed {len(removed_users)} user(s) from the workspace',
             'workspace': response_serializer.data
         })
-    
+
     @extend_schema(
         description="Add channels to a workspace",
         request=AddRemoveChannelsSerializer,
@@ -1012,6 +1050,22 @@ class GroupViewSet(viewsets.ModelViewSet):
             )
         
         group.users.add(request.user)
+
+        joiner_name = getattr(request.user, 'name', None) or request.user.email
+        owner_ids = {group.group_admin_id, group.user_id} - {None, request.user.id}
+        for owner in User.objects.filter(id__in=owner_ids, is_active=True):
+            _safe_notify(
+                user=owner,
+                notification_type='group.member_joined',
+                title=f'{joiner_name} joined {group.name}',
+                body=group.name,
+                data={
+                    'group_id': group.id,
+                    'group_slug': group.slug,
+                    'joined_user_id': request.user.id,
+                },
+            )
+
         serializer = self.get_serializer(group)
         return Response({
             'message': f'Successfully joined group: {group.name}',
@@ -1064,8 +1118,23 @@ class GroupViewSet(viewsets.ModelViewSet):
         
         user_ids = serializer.validated_data['user_ids']
         users = User.objects.filter(id__in=user_ids)
+        existing_user_ids = set(group.users.values_list('id', flat=True))
+        new_users = [u for u in users if u.id not in existing_user_ids]
         group.users.add(*users)
-        
+
+        for added_user in new_users:
+            _safe_notify(
+                user=added_user,
+                notification_type='group.added',
+                title='Added to group',
+                body=group.name,
+                data={
+                    'group_id': group.id,
+                    'group_slug': group.slug,
+                    'added_by_user_id': request.user.id,
+                },
+            )
+
         response_serializer = self.get_serializer(group)
         return Response({
             'message': f'Successfully added {len(users)} user(s) to the group',
@@ -1095,8 +1164,22 @@ class GroupViewSet(viewsets.ModelViewSet):
         
         user_ids = serializer.validated_data['user_ids']
         users = User.objects.filter(id__in=user_ids)
+        removed_users = [u for u in users if group.users.filter(id=u.id).exists()]
         group.users.remove(*users)
-        
+
+        for removed_user in removed_users:
+            _safe_notify(
+                user=removed_user,
+                notification_type='group.removed',
+                title='Removed from group',
+                body=group.name,
+                data={
+                    'group_id': group.id,
+                    'group_slug': group.slug,
+                    'removed_by_user_id': request.user.id,
+                },
+            )
+
         response_serializer = self.get_serializer(group)
         return Response({
             'message': f'Successfully removed {len(users)} user(s) from the group',

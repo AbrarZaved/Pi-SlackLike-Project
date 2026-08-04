@@ -1,9 +1,10 @@
+from operator import call
 from uuid import uuid4
 
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
-from rest_framework import status
+from rest_framework import request, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -127,6 +128,14 @@ class CallCreateView(APIView):
 				for user_id in participant_ids
 			])
 
+		# Ring everyone who was invited (push + websocket). Never break the call.
+		try:
+			from .notifications import notify_call_invited
+
+			notify_call_invited(call=call, exclude_user_ids=[request.user.id])
+		except Exception:
+			pass
+
 		return Response(CallSerializer(call).data, status=status.HTTP_201_CREATED)
 
 
@@ -200,11 +209,18 @@ class CallEndView(APIView):
 		call = Call.objects.get(pk=call_id)
 		if call.created_by_id != request.user.id:
 			return Response({'error': 'Only the call creator can end the call'}, status=status.HTTP_403_FORBIDDEN)
-
+	
 		if call.is_active:
 			call.is_active = False
 			call.ended_at = timezone.now()
 			call.save(update_fields=['is_active', 'ended_at'])
+
+			try:
+				from .notifications import notify_call_finished
+
+				notify_call_finished(call=call, ended_by_id=request.user.id)
+			except Exception:
+				pass
 
 		return Response(CallSerializer(call).data, status=status.HTTP_200_OK)
 

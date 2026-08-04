@@ -357,13 +357,43 @@ class DashboardViewSet(viewsets.ViewSet):
 class _AdminActivationMixin:
     """Shared helpers for activate/deactivate endpoints."""
 
+    # Set per viewset: 'workspace' | 'channel' | 'group' | None
+    notify_kind = None
+
     def _set_active(self, instance, is_active: bool):
+        was_active = instance.is_active
         instance.is_active = is_active
         instance.save(update_fields=['is_active'])
+
+        if was_active != is_active:
+            self._notify_status_change(instance, is_active)
+
         return Response({
             'id': instance.id,
             'is_active': instance.is_active,
         })
+
+    def _notify_status_change(self, instance, is_active: bool) -> None:
+        """Tell affected members. Never break the admin action."""
+        if not self.notify_kind:
+            return
+
+        actor_id = getattr(self.request.user, 'id', None)
+        try:
+            from .notifications import (
+                notify_channel_status,
+                notify_group_status,
+                notify_workspace_status,
+            )
+
+            if self.notify_kind == 'workspace':
+                notify_workspace_status(workspace=instance, is_active=is_active, actor_id=actor_id)
+            elif self.notify_kind == 'channel':
+                notify_channel_status(channel=instance, is_active=is_active, actor_id=actor_id)
+            elif self.notify_kind == 'group':
+                notify_group_status(group=instance, is_active=is_active, actor_id=actor_id)
+        except Exception:
+            pass
 
 
 class AdminUserActivationViewSet(_AdminActivationMixin, viewsets.GenericViewSet):
@@ -385,6 +415,7 @@ class AdminUserActivationViewSet(_AdminActivationMixin, viewsets.GenericViewSet)
 class AdminWorkspaceActivationViewSet(_AdminActivationMixin, viewsets.GenericViewSet):
     queryset = Workspace.objects.all()
     permission_classes = [IsAuthenticated, IsAdmin]
+    notify_kind = 'workspace'
 
     @extend_schema(
         description='Set a workspace active/inactive',
@@ -401,6 +432,7 @@ class AdminWorkspaceActivationViewSet(_AdminActivationMixin, viewsets.GenericVie
 class AdminChannelActivationViewSet(_AdminActivationMixin, viewsets.GenericViewSet):
     queryset = Channel.objects.all()
     permission_classes = [IsAuthenticated, IsAdmin]
+    notify_kind = 'channel'
 
     @extend_schema(
         description='Set a channel active/inactive',
@@ -417,7 +449,8 @@ class AdminChannelActivationViewSet(_AdminActivationMixin, viewsets.GenericViewS
 class AdminGroupActivationViewSet(_AdminActivationMixin, viewsets.GenericViewSet):
     queryset = Group.objects.all()
     permission_classes = [IsAuthenticated, IsAdmin]
-
+    notify_kind = 'group'
+    
     @extend_schema(
         description='Set a group active/inactive',
         request=ActivationStatusSerializer,

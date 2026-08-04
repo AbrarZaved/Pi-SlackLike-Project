@@ -80,7 +80,39 @@ def _extract_mentioned_names(content: str) -> List[str]:
         out.append(n)
     return out
 
+_ATTACHMENT_PREVIEWS = {
+    'image': '📷 Photo',
+    'audio': '🎙️ Voice message',
+    'video': '🎬 Video',
+    'file': '📄 File',
+}
 
+
+def _display_name(user) -> str:
+    """Best available human label for a user."""
+    return (
+        (getattr(user, 'name', None) or '').strip()
+        or (getattr(user, 'email', None) or '').strip()
+        or 'Someone'
+    )
+
+
+def _message_preview(message: ChatMessage) -> str:
+    """Notification body for a message, including media-only messages."""
+    text = (message.content or '').strip()
+    if text:
+        return Truncator(text).chars(120)
+
+    attachments = list(message.attachments.all())
+    if attachments:
+        if len(attachments) == 1:
+            return _ATTACHMENT_PREVIEWS.get(attachments[0].kind, '📄 Attachment')
+        return f'📂 {len(attachments)} attachments'
+
+    if message.forwarded_from_id:
+        return '↪️ Forwarded a message'
+
+    return 'New message'
 class BaseChatConsumer(AsyncJsonWebsocketConsumer):
     """Shared behavior for chat consumers."""
 
@@ -269,36 +301,73 @@ class BaseChatConsumer(AsyncJsonWebsocketConsumer):
 
         return [self._serialize_message(m) for m in replies]
 
+
     @database_sync_to_async
     def _create_notifications_for_message(self, *, message_id: int) -> None:
         from Notification.services import create_notification_for_user
 
         message = (
             ChatMessage.objects.filter(id=message_id)
-            .select_related('sender', 'channel', 'group', 'dm_thread')
+            .select_related('sender', 'channel', 'group', 'dm_thread', 'reply_to__sender')
+            .prefetch_related('attachments')
             .first()
         )
         if not message:
             return
 
         sender_id = message.sender_id
-        preview = Truncator(message.content or '').chars(120)
+        sender_name = _display_name(message.sender)
+        preview = _message_preview(message)
         mentioned_names = set(_extract_mentioned_names(message.content or ''))
+
+        notified_ids = set()
+
+        def notify(user, *, notification_type: str, title: str, data: dict) -> None:
+            if user.id in notified_ids or user.id == sender_id:
+                return
+            notified_ids.add(user.id)
+            create_notification_for_user(
+                user=user,
+                notification_type=notification_type,
+                title=title,
+                body=preview,
+                data=data,
+            )
+
+        # --- Reply: always notify the author being replied to -------------
+        if message.reply_to_id and message.reply_to and message.reply_to.sender_id != sender_id:
+            reply_target = message.reply_to.sender
+            if getattr(reply_target, 'is_active', True):
+                notify(
+                    reply_target,
+                    notification_type='chat.reply',
+                    title=f'{sender_name} replied to you',
+                    data={
+                        'message_id': message.id,
+                        'reply_to_message_id': message.reply_to_id,
+                        'sender_id': sender_id,
+                        'channel_id': message.channel_id,
+                        'group_id': message.group_id,
+                        'dm_thread_id': message.dm_thread_id,
+                    },
+                )
 
         if message.channel_id and message.channel:
             channel = message.channel
-            recipients = channel.users.exclude(id=sender_id)
-            for user in recipients:
-                # Suppress notifications for users already connected to this channel chat websocket.
+            for user in channel.users.exclude(id=sender_id):
+                # Suppress for users already connected to this channel websocket.
                 if _is_user_connected(f'chat_channel_{channel.id}', int(user.id)):
                     continue
 
                 is_mention = bool(_normalize_name(getattr(user, 'name', None)) in mentioned_names)
-                create_notification_for_user(
-                    user=user,
+                notify(
+                    user,
                     notification_type='chat.mention' if is_mention else 'chat.channel_message',
-                    title='New message',
-                    body=preview,
+                    title=(
+                        f'{sender_name} mentioned you in #{channel.name}'
+                        if is_mention
+                        else f'{sender_name} in #{channel.name}'
+                    ),
                     data={
                         'channel_id': channel.id,
                         'channel_name': channel.name,
@@ -311,17 +380,19 @@ class BaseChatConsumer(AsyncJsonWebsocketConsumer):
 
         if message.group_id and message.group:
             group = message.group
-            recipients = group.users.exclude(id=sender_id)
-            for user in recipients:
+            for user in group.users.exclude(id=sender_id):
                 if _is_user_connected(f'chat_group_{group.id}', int(user.id)):
                     continue
 
                 is_mention = bool(_normalize_name(getattr(user, 'name', None)) in mentioned_names)
-                create_notification_for_user(
-                    user=user,
+                notify(
+                    user,
                     notification_type='chat.mention' if is_mention else 'chat.group_message',
-                    title='New message',
-                    body=preview,
+                    title=(
+                        f'{sender_name} mentioned you in {group.name}'
+                        if is_mention
+                        else f'{sender_name} in {group.name}'
+                    ),
                     data={
                         'group_id': group.id,
                         'group_name': group.name,
@@ -342,14 +413,52 @@ class BaseChatConsumer(AsyncJsonWebsocketConsumer):
             if _is_user_connected(f'chat_dm_{thread.id}', int(other.id)):
                 return
 
-            create_notification_for_user(
-                user=other,
+            notify(
+                other,
                 notification_type='chat.direct_message',
-                title='New message',
-                body=preview,
-                data={'dm_thread_id': thread.id, 'message_id': message.id, 'sender_id': sender_id},
+                title=sender_name,
+                data={
+                    'dm_thread_id': thread.id,
+                    'message_id': message.id,
+                    'sender_id': sender_id,
+                },
             )
 
+    @database_sync_to_async
+    def _create_notification_for_reaction(self, *, message_id: int, actor_id: int, emoji: str) -> None:
+        from Notification.services import create_notification_for_user
+
+        message = (
+            ChatMessage.objects.filter(id=message_id)
+            .select_related('sender', 'channel', 'group', 'dm_thread')
+            .prefetch_related('attachments')
+            .first()
+        )
+        if not message or message.sender_id == actor_id:
+            return
+        if not getattr(message.sender, 'is_active', True):
+            return
+
+        # Author is already looking at this room; the websocket event is enough.
+        if _is_user_connected(self.room_group_name, int(message.sender_id)):
+            return
+
+        actor = User.objects.filter(id=actor_id).first()
+
+        create_notification_for_user(
+            user=message.sender,
+            notification_type='chat.reaction',
+            title=f'{_display_name(actor)} reacted {emoji}',
+            body=_message_preview(message),
+            data={
+                'message_id': message.id,
+                'emoji': emoji,
+                'actor_id': actor_id,
+                'channel_id': message.channel_id,
+                'group_id': message.group_id,
+                'dm_thread_id': message.dm_thread_id,
+            },
+        )
     async def _handle_reaction_add(self, data: Dict[str, Any]):
         message_id = data.get('message_id')
         emoji = data.get('emoji')
@@ -371,6 +480,17 @@ class BaseChatConsumer(AsyncJsonWebsocketConsumer):
 
         payload = {'type': 'reaction.updated', 'message_id': message_id_int, 'reactions': result}
         await self._broadcast(payload)
+
+        # Notify the message author about the new reaction.
+        try:
+            await self._create_notification_for_reaction(
+                message_id=message_id_int,
+                actor_id=user.id,
+                emoji=str(emoji),
+            )
+        except Exception:
+            # Never break chat flow due to notifications
+            pass
 
     async def _handle_reaction_remove(self, data: Dict[str, Any]):
         message_id = data.get('message_id')

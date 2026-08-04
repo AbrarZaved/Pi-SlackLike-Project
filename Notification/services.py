@@ -92,8 +92,7 @@ def create_notification_for_user(
 	If push notifications are disabled globally or for the user, this returns None
 	and no notification is stored.
 	"""
-	if not _user_allows_push(user=user):
-		return None
+	allows_push = _user_allows_push(user=user)
 
 	notification = Notification.objects.create(
 		user=user,
@@ -122,7 +121,7 @@ def create_notification_for_user(
 			},
 		)
 
-	if push:
+	if push and allows_push:
 		_queue_push(notification=notification)
 
 	return notification
